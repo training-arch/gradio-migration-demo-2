@@ -5,12 +5,15 @@ import json
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional
+import pandas as pd
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .engine import run_targets
+from .tasks import get_job_runner
+from .storage import get_storage
 
 # --- simple local storage dirs ---
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -74,8 +77,9 @@ def create_job(payload: JobCreate, bg: BackgroundTasks):
         "targets_config": payload.targets_config,
     }
 
-    # run in background for demo
-    bg.add_task(_run_job, job_id)
+    # run job using configured runner (background or inline)
+    runner = get_job_runner(bg)
+    runner.submit(_run_job, job_id)
     return {"job_id": job_id}
 
 @app.get("/jobs/{job_id}")
@@ -100,7 +104,46 @@ def download_result(job_id: str):
     path = Path(job["result_path"]).resolve()
     if not path.exists():
         raise HTTPException(status_code=404, detail="result file missing")
-    return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename="mistakes_only.xlsx")
+    storage = get_storage()
+    return storage.result_download_response(path, download_name="mistakes_only.xlsx")
+
+@app.get("/uploads/{upload_id}/columns")
+def get_upload_columns(upload_id: str):
+    """Return column names from a previously uploaded Excel file."""
+    upload_path = UPLOADS_DIR / f"{upload_id}.xlsx"
+    if not upload_path.exists():
+        raise HTTPException(status_code=404, detail="upload_id not found")
+    try:
+        df = pd.read_excel(upload_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"failed to read excel: {e}")
+    cols = [str(c) for c in df.columns]
+    return {"columns": cols}
+
+@app.get("/uploads/{upload_id}/values")
+def get_upload_values(upload_id: str, column: str, limit: int = 200):
+    """Return unique non-empty values for a given column from the uploaded Excel."""
+    upload_path = UPLOADS_DIR / f"{upload_id}.xlsx"
+    if not upload_path.exists():
+        raise HTTPException(status_code=404, detail="upload_id not found")
+    try:
+        df = pd.read_excel(upload_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"failed to read excel: {e}")
+    if column not in df.columns:
+        raise HTTPException(status_code=404, detail="column not found")
+    vals = (
+        df[column]
+        .dropna()
+        .astype(str)
+        .map(lambda x: x.strip())
+        .replace("", pd.NA)
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    vals = sorted(map(str, vals))[: max(1, int(limit))]
+    return {"values": vals}
 
 # --- background runner ---
 def _run_job(job_id: str):

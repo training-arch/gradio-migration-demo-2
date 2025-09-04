@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python virtualenvs
+.venv/
+venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node/Next.js
+node_modules/
+.next/
+out/
+
+# Local data artifacts
+uploads/
+results/
+*.xlsx
+

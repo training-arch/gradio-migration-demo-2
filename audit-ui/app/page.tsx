@@ -17,6 +17,9 @@ export default function Home() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "upload" | "job" | "poll">(null);
   const [error, setError] = useState<string | null>(null);
+  const [columns, setColumns] = useState<string[]>([]);
+  const [targets, setTargets] = useState<string[]>([]);
+  const [configText, setConfigText] = useState<string>("{}");
 
   // Backend base URL: change here or set NEXT_PUBLIC_API_BASE
   const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -35,6 +38,9 @@ export default function Home() {
     setStatus(null);
     setDownloadUrl(null);
     setError(null);
+    setColumns([]);
+    setTargets([]);
+    setConfigText("{}");
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
       pollTimer.current = null;
@@ -57,11 +63,41 @@ export default function Home() {
 
       setUploadId(res.data.upload_id);
       resetStateForNewUpload();
+      try {
+        const colsRes = await axios.get(`${API}/uploads/${res.data.upload_id}/columns`);
+        setColumns(colsRes.data.columns || []);
+      } catch (e: any) {
+        console.warn("Failed to fetch columns", e?.message);
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Upload failed");
     } finally {
       setBusy(null);
     }
+  };
+  // Build default config from selected targets and allow editing as JSON
+  const buildDefaults = (cols: string[]) => {
+    const cfg: Record<string, any> = {};
+    for (const c of cols) {
+      cfg[c] = {
+        ai: false,
+        prompt: "",
+        wc: true,
+        wc_min: 3,
+        kw_flag: { enabled: false, mode: "ANY", phrases: [] },
+        vf_on: false,
+        filters: {},
+        filter_mode: "AND",
+        tf_on: false,
+        text_filters: {},
+      };
+    }
+    return cfg;
+  };
+
+  const initConfigFromTargets = () => {
+    const cfg = buildDefaults(targets || []);
+    setConfigText(JSON.stringify(cfg, null, 2));
   };
 
   const handleJob = async () => {
@@ -70,18 +106,17 @@ export default function Home() {
       setBusy("job");
       setError(null);
 
-      const payload = {
-        upload_id: uploadId,
-        targets_config: {
-          Enquiry: {
-            wc: true,
-            wc_min: 3,
-            kw_flag: { enabled: true, mode: "ANY", phrases: ["urgent", "help"] },
-          },
-        },
-      };
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(configText || "{}");
+      } catch (e: any) {
+        throw new Error("Invalid targets_config JSON");
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("targets_config must be a JSON object");
+      }
 
-      const res = await axios.post(`${API}/jobs`, payload);
+      const res = await axios.post(`${API}/jobs`, { upload_id: uploadId, targets_config: parsed });
       const id: string = res.data.job_id;
       setJobId(id);
       setStatus({ status: "PENDING", progress: 0 });
@@ -158,6 +193,32 @@ export default function Home() {
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
           Step 1 — Upload Excel
         </h2>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ minWidth: 260 }}>
+            <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>Select Target Columns</label>
+            <select multiple value={targets} onChange={(e) => {
+              const opts = Array.from((e.target as HTMLSelectElement).selectedOptions).map(o => (o as HTMLOptionElement).value);
+              setTargets(opts);
+            }} style={{ width: "100%", minHeight: 120 }}>
+              {(columns || []).map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <button onClick={initConfigFromTargets} disabled={!uploadId || (targets.length === 0)} style={{ marginTop: 8 }}>
+              Initialize Config From Selection
+            </button>
+          </div>
+          <div style={{ flex: 1, minWidth: 320 }}>
+            <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>targets_config (JSON)</label>
+            <textarea
+              value={configText}
+              onChange={(e) => setConfigText((e.target as HTMLTextAreaElement).value)}
+              rows={14}
+              style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
+              placeholder={'{ "ColumnName": { "wc": true } }'}
+            />
+          </div>
+        </div>
         <input
           type="file"
           accept=".xlsx"
