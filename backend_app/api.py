@@ -21,6 +21,21 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Audit Engine API (Local)")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+
 # --- super tiny in-memory job registry ---
 JOBS: Dict[str, Dict[str, Any]] = {}
 
