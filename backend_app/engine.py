@@ -185,7 +185,9 @@ def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str |
 
             # Word count on TARGET
             if wc_enabled:
-                if val is None or not str(val).strip():
+                # Treat NaN/None/blank string as NULL VALUE
+                is_null = pd.isna(val) or (isinstance(val, str) and not val.strip())
+                if is_null:
                     messages.append("NULL VALUE")
                 else:
                     if word_count(val) < wc_min:
