@@ -14,6 +14,15 @@ from pydantic import BaseModel
 from .engine import run_targets
 from .tasks import get_job_runner
 from .storage import get_storage
+from .db import get_session_factory
+
+try:
+    from .models import Upload as DBUpload, Job as DBJob  # type: ignore
+except Exception:
+    DBUpload = None  # type: ignore
+    DBJob = None  # type: ignore
+
+SessionFactory = get_session_factory()
 
 # --- simple local storage dirs ---
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -58,6 +67,16 @@ def upload_excel(file: UploadFile = File(...)):
     dst = UPLOADS_DIR / f"{upload_id}.xlsx"
     with dst.open("wb") as f:
         shutil.copyfileobj(file.file, f)
+    # Optional DB mirror
+    if SessionFactory and DBUpload is not None:
+        try:
+            with SessionFactory() as s:  # type: ignore[attr-defined]
+                obj = DBUpload(id=upload_id, filename=file.filename, path=str(dst))  # type: ignore[misc]
+                s.add(obj)
+                s.commit()
+        except Exception:
+            # DB is optional; ignore failures
+            pass
     return {"upload_id": upload_id, "filename": file.filename}
 
 @app.post("/jobs")
@@ -76,6 +95,24 @@ def create_job(payload: JobCreate, bg: BackgroundTasks):
         "upload_path": str(upload_path),
         "targets_config": payload.targets_config,
     }
+
+    # Optional DB mirror
+    if SessionFactory and DBJob is not None:
+        try:
+            with SessionFactory() as s:  # type: ignore[attr-defined]
+                job = DBJob(
+                    id=job_id,
+                    upload_id=payload.upload_id,
+                    status="PENDING",
+                    progress=0,
+                    error=None,
+                    targets_config=payload.targets_config,  # type: ignore[arg-type]
+                    result_path=str(out_path),
+                )
+                s.add(job)
+                s.commit()
+        except Exception:
+            pass
 
     # run job using configured runner (background or inline)
     runner = get_job_runner(bg)
@@ -145,6 +182,49 @@ def get_upload_values(upload_id: str, column: str, limit: int = 200):
     vals = sorted(map(str, vals))[: max(1, int(limit))]
     return {"values": vals}
 
+@app.get("/uploads/{upload_id}/preview")
+def preview_upload(upload_id: str, targets_config: str, limit: int = 20):
+    """
+    Run a dry preview of the engine and return counts and a sample of kept rows.
+    Query params:
+      - targets_config: JSON string of the configuration (URL-encoded)
+      - limit: max number of sample rows to return (default 20)
+    """
+    upload_path = UPLOADS_DIR / f"{upload_id}.xlsx"
+    if not upload_path.exists():
+      raise HTTPException(status_code=404, detail="upload_id not found")
+    try:
+        cfg = json.loads(targets_config or "{}")
+        if not isinstance(cfg, dict):
+            raise ValueError("targets_config must be a JSON object")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid targets_config: {e}")
+
+    try:
+        # total rows from source
+        import pandas as pd
+        total_rows = int(pd.read_excel(upload_path).shape[0])
+        kept_df, _ = run_targets(str(upload_path), cfg, save_path=None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    rows_kept = int(kept_df.shape[0])
+    # per-target counts
+    per_target = {}
+    for t in cfg.keys():
+        col = f"{t} Mistakes"
+        if col in kept_df.columns:
+            per_target[t] = int((kept_df[col] != "[]").sum())
+    # sample rows (incl. mistakes columns)
+    sample = kept_df.head(max(0, int(limit))).to_dict(orient="records")
+
+    return {
+        "rows_total": total_rows,
+        "rows_kept": rows_kept,
+        "per_target_counts": per_target,
+        "sample_rows": sample,
+    }
+
 # --- background runner ---
 def _run_job(job_id: str):
     job = JOBS.get(job_id)
@@ -152,11 +232,47 @@ def _run_job(job_id: str):
         return
     try:
         job["status"] = "RUNNING"; job["progress"] = 5
+        # DB mirror
+        if SessionFactory and DBJob is not None:
+            try:
+                with SessionFactory() as s:  # type: ignore[attr-defined]
+                    dbj = s.get(DBJob, job_id)
+                    if dbj:
+                        dbj.status = "RUNNING"
+                        dbj.progress = 5
+                        s.commit()
+            except Exception:
+                pass
+
         kept_df, out_path = run_targets(job["upload_path"], job["targets_config"], save_path=job["result_path"])
         job["progress"] = 95
+
         # write succeeded
         job["status"] = "SUCCEEDED"; job["progress"] = 100
+        # DB mirror
+        if SessionFactory and DBJob is not None:
+            try:
+                with SessionFactory() as s:  # type: ignore[attr-defined]
+                    dbj = s.get(DBJob, job_id)
+                    if dbj:
+                        dbj.status = "SUCCEEDED"
+                        dbj.progress = 100
+                        dbj.result_path = job.get("result_path")
+                        s.commit()
+            except Exception:
+                pass
     except Exception as e:
         job["status"] = "FAILED"
         job["error"] = str(e)
         job["progress"] = 100
+        if SessionFactory and DBJob is not None:
+            try:
+                with SessionFactory() as s:  # type: ignore[attr-defined]
+                    dbj = s.get(DBJob, job_id)
+                    if dbj:
+                        dbj.status = "FAILED"
+                        dbj.progress = 100
+                        dbj.error = str(e)
+                        s.commit()
+            except Exception:
+                pass
