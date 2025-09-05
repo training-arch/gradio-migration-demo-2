@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
@@ -20,6 +20,7 @@ export default function Home() {
   const [columns, setColumns] = useState<string[]>([]);
   const [targets, setTargets] = useState<string[]>([]);
   const [configText, setConfigText] = useState<string>("{}");
+  const [configError, setConfigError] = useState<string | null>(null);
   const [preview, setPreview] = useState<null | {
     rows_total: number;
     rows_kept: number;
@@ -27,6 +28,9 @@ export default function Home() {
     sample_rows: any[];
   }>(null);
   const [previewBusy, setPreviewBusy] = useState<boolean>(false);
+  const statusLabel = status?.status || null;
+  const statusBg = statusLabel === 'SUCCEEDED' ? '#e6f6ea' : statusLabel === 'FAILED' ? '#ffe9e9' : '#f3f3f3';
+  const statusFg = statusLabel === 'SUCCEEDED' ? '#05620e' : statusLabel === 'FAILED' ? '#8a1f1f' : '#555';
 
   // Backend base URL: change here or set NEXT_PUBLIC_API_BASE
   const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -105,6 +109,7 @@ export default function Home() {
   const initConfigFromTargets = () => {
     const cfg = buildDefaults(targets || []);
     setConfigText(JSON.stringify(cfg, null, 2));
+    setConfigError(null);
   };
 
   const handlePreview = async () => {
@@ -225,7 +230,7 @@ export default function Home() {
       {/* Step 1: Upload */}
       <section style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
-          Step 1 — Upload Excel
+          Step 1 - Upload Excel
         </h2>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ minWidth: 260 }}>
@@ -246,11 +251,28 @@ export default function Home() {
             <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>targets_config (JSON)</label>
             <textarea
               value={configText}
-              onChange={(e) => setConfigText((e.target as HTMLTextAreaElement).value)}
+              onChange={(e) => {
+                const v = (e.target as HTMLTextAreaElement).value;
+                setConfigText(v);
+                try {
+                  const parsed = JSON.parse(v || '{}');
+                  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('targets_config must be a JSON object');
+                  }
+                  setConfigError(null);
+                } catch (err: any) {
+                  setConfigError(err?.message || 'Invalid targets_config JSON');
+                }
+              }}
               rows={14}
               style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
               placeholder={'{ "ColumnName": { "wc": true } }'}
             />
+            {configError ? (
+              <div style={{ color: '#8a1f1f', marginTop: 6 }}>Warning: {configError}</div>
+            ) : (
+              <div style={{ color: '#05620e', marginTop: 6 }}>JSON looks valid</div>
+            )}
           </div>
         </div>
         <input
@@ -259,8 +281,8 @@ export default function Home() {
           onChange={(e) => setFile(e.target.files?.[0] || null)}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <button onClick={handlePreview} disabled={!uploadId || previewBusy}>
-            {previewBusy ? "Previewing…" : "Preview (top 10)"}
+          <button onClick={handlePreview} disabled={!uploadId || previewBusy || !!configError}>
+            {previewBusy ? "Previewing..." : "Preview (top 10)"}
           </button>
           {preview && (
             <span>
@@ -270,7 +292,7 @@ export default function Home() {
         </div>
         {preview && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>Per‑target counts</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Per-target counts</div>
             <pre style={{ background: "#fafafa", padding: 8, border: "1px solid #eee", borderRadius: 8 }}>
               {JSON.stringify(preview.per_target_counts, null, 2)}
             </pre>
@@ -302,11 +324,11 @@ export default function Home() {
           disabled={!file || busy === "upload"}
           style={{ marginLeft: 8 }}
         >
-          {busy === "upload" ? "Uploading…" : "Upload"}
+          {busy === "upload" ? "Uploading..." : "Upload"}
         </button>
         {uploadId && (
           <p style={{ marginTop: 8 }}>
-            ✅ Uploaded: <code>{uploadId}</code>
+            Uploaded: <code>{uploadId}</code>
           </p>
         )}
       </section>
@@ -314,17 +336,17 @@ export default function Home() {
       {/* Step 2: Create Job */}
       <section style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
-          Step 2 — Create Job
+          Step 2 - Create Job
         </h2>
         <button
           onClick={handleJob}
-          disabled={!uploadId || busy === "job"}
-        >
-          {busy === "job" ? "Creating…" : "Create Job"}
+          disabled={!uploadId || busy === "job" || !!configError}
+          >
+          {busy === "job" ? "Creating..." : "Create Job"}
         </button>
         {jobId && (
           <p style={{ marginTop: 8 }}>
-            📌 Job ID: <code>{jobId}</code>
+            Job ID: <code>{jobId}</code>
           </p>
         )}
       </section>
@@ -332,17 +354,21 @@ export default function Home() {
       {/* Step 3: Status + Download */}
       <section style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
-          Step 3 — Status
+          Step 3 - Status
         </h2>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button onClick={manualPoll} disabled={!jobId || busy === "poll"}>
-            {busy === "poll" ? "Polling…" : "Poll Now"}
+            {busy === "poll" ? "Polling..." : "Poll Now"}
           </button>
           {status?.progress !== undefined && (
             <span>Progress: {Math.min(100, Math.max(0, Number(status.progress) || 0))}%</span>
           )}
-          {status?.status && <span>Status: <strong>{status.status}</strong></span>}
+          {status?.status && (
+            <span>
+              Status: <span style={{ background: statusBg, color: statusFg, padding: '2px 8px', borderRadius: 12, border: '1px solid #ddd' }}>{status.status}</span>
+            </span>
+          )}
         </div>
 
         {status && (
@@ -355,7 +381,7 @@ export default function Home() {
         {downloadUrl && (
           <div style={{ marginTop: 12 }}>
             <a href={downloadUrl} download="mistakes_only.xlsx">
-              ⬇️ Download Result
+              Download Result
             </a>
           </div>
         )}
@@ -363,3 +389,4 @@ export default function Home() {
     </main>
   );
 }
+

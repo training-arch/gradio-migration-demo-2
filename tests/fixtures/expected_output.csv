@@ -1,0 +1,4 @@
+Enquiry,Channel,Enquiry Mistakes
+"please help on this",Email,"Keyword flag: urgent, help"
+"","","NULL VALUE"
+"two words",Chat,"Too short (<3 words)"
