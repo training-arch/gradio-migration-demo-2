@@ -215,8 +215,11 @@ def preview_upload(upload_id: str, targets_config: str, limit: int = 20):
         col = f"{t} Mistakes"
         if col in kept_df.columns:
             per_target[t] = int((kept_df[col] != "[]").sum())
-    # sample rows (incl. mistakes columns)
-    sample = kept_df.head(max(0, int(limit))).to_dict(orient="records")
+    # sample rows (incl. mistakes columns). Ensure JSON-safe (no NaN/Inf).
+    sample_df = kept_df.head(max(0, int(limit))).copy()
+    # Convert NaN to None so JSONResponse can serialize as null
+    sample_df = sample_df.where(pd.notna(sample_df), None)
+    sample = sample_df.to_dict(orient="records")
 
     return {
         "rows_total": total_rows,

@@ -20,6 +20,13 @@ export default function Home() {
   const [columns, setColumns] = useState<string[]>([]);
   const [targets, setTargets] = useState<string[]>([]);
   const [configText, setConfigText] = useState<string>("{}");
+  const [preview, setPreview] = useState<null | {
+    rows_total: number;
+    rows_kept: number;
+    per_target_counts: Record<string, number>;
+    sample_rows: any[];
+  }>(null);
+  const [previewBusy, setPreviewBusy] = useState<boolean>(false);
 
   // Backend base URL: change here or set NEXT_PUBLIC_API_BASE
   const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -98,6 +105,33 @@ export default function Home() {
   const initConfigFromTargets = () => {
     const cfg = buildDefaults(targets || []);
     setConfigText(JSON.stringify(cfg, null, 2));
+  };
+
+  const handlePreview = async () => {
+    try {
+      if (!uploadId) return;
+      setPreviewBusy(true);
+      setError(null);
+      setPreview(null);
+
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(configText || "{}");
+      } catch (e: any) {
+        throw new Error("Invalid targets_config JSON");
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("targets_config must be a JSON object");
+      }
+
+      const params = { targets_config: JSON.stringify(parsed), limit: 10 } as any;
+      const res = await axios.get(`${API}/uploads/${uploadId}/preview`, { params });
+      setPreview(res.data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || "Preview failed");
+    } finally {
+      setPreviewBusy(false);
+    }
   };
 
   const handleJob = async () => {
@@ -224,6 +258,45 @@ export default function Home() {
           accept=".xlsx"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
         />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+          <button onClick={handlePreview} disabled={!uploadId || previewBusy}>
+            {previewBusy ? "Previewing…" : "Preview (top 10)"}
+          </button>
+          {preview && (
+            <span>
+              Kept {preview.rows_kept} of {preview.rows_total} rows
+            </span>
+          )}
+        </div>
+        {preview && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Per‑target counts</div>
+            <pre style={{ background: "#fafafa", padding: 8, border: "1px solid #eee", borderRadius: 8 }}>
+              {JSON.stringify(preview.per_target_counts, null, 2)}
+            </pre>
+            <div style={{ fontWeight: 600, margin: "6px 0 4px" }}>Sample rows</div>
+            <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 8 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {Object.keys(preview.sample_rows[0] || {}).map((k) => (
+                      <th key={k} style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: 6 }}>{k}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(preview.sample_rows || []).map((row, idx) => (
+                    <tr key={idx}>
+                      {Object.keys(preview.sample_rows[0] || {}).map((k) => (
+                        <td key={k} style={{ borderBottom: "1px solid #f5f5f5", padding: 6 }}>{String(row[k])}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         <button
           onClick={handleUpload}
           disabled={!file || busy === "upload"}
