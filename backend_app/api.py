@@ -15,6 +15,11 @@ from .engine import run_targets
 from .tasks import get_job_runner
 from .storage import get_storage
 from .db import get_session_factory
+try:  # optional env loader for local dev
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 
 try:
     from .models import Upload as DBUpload, Job as DBJob  # type: ignore
@@ -35,12 +40,18 @@ app = FastAPI(title="Audit Engine API (Local)")
 
 from fastapi.middleware.cors import CORSMiddleware
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+cors_env = os.getenv("CORS_ORIGINS")
+if cors_env:
+    origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+else:
+    origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-    ],
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,7 +125,29 @@ def create_job(payload: JobCreate, bg: BackgroundTasks):
         except Exception:
             pass
 
-    # run job using configured runner (background or inline)
+    # Run job using configured runner (background/inline) or Celery when enabled
+    mode = (os.getenv("JOB_RUNNER", "background").strip().lower())
+    if mode == "celery":
+        try:
+            from .celery_app import app as celery_app  # type: ignore
+        except Exception:
+            celery_app = None  # type: ignore
+        if not celery_app:
+            raise HTTPException(
+                status_code=503,
+                detail="JOB_RUNNER=celery but Celery is not configured. Set CELERY_BROKER_URL (and optional CELERY_RESULT_BACKEND).",
+            )
+        # Submit Celery task; pass explicit paths so API can know output location without fetching result
+        task = celery_app.send_task(  # type: ignore[union-attr]
+            "run_job_task",
+            args=[str(upload_path), payload.targets_config, str(out_path)],
+        )
+        JOBS[job_id]["status"] = "PENDING"
+        JOBS[job_id]["progress"] = 0
+        JOBS[job_id]["celery_task_id"] = task.id
+        return {"job_id": job_id}
+
+    # default: background or inline via FastAPI runner
     runner = get_job_runner(bg)
     runner.submit(_run_job, job_id)
     return {"job_id": job_id}
@@ -124,6 +157,31 @@ def get_job(job_id: str):
     job = JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
+    # If Celery was used, reconcile status with Celery task state
+    task_id = job.get("celery_task_id")
+    if task_id:
+        try:
+            from .celery_app import app as celery_app  # type: ignore
+            if celery_app:
+                AsyncResult = celery_app.AsyncResult  # type: ignore[attr-defined]
+                res = AsyncResult(task_id)
+                state = str(res.state or "").upper()
+                # Map Celery states to API status
+                if state in ("PENDING", "RECEIVED"):
+                    job["status"] = "PENDING"; job["progress"] = 0
+                elif state in ("STARTED", "RETRY"):
+                    job["status"] = "RUNNING"; job["progress"] = max(int(job.get("progress", 0)), 5)
+                elif state == "SUCCESS":
+                    job["status"] = "SUCCEEDED"; job["progress"] = 100
+                elif state == "FAILURE":
+                    job["status"] = "FAILED"; job["progress"] = 100
+                    try:
+                        job["error"] = str(res.info)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+        except Exception:
+            # If Celery isn't importable or errors, fall back to last known values
+            pass
     # only expose safe fields
     return {
         "status": job["status"],

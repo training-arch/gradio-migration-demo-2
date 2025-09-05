@@ -376,6 +376,11 @@ export default function Home() {
             {JSON.stringify(status, null, 2)}
           </pre>
         )}
+        {status?.error && (
+          <div style={{ background: '#ffe9e9', border: '1px solid #f5b5b5', padding: '0.75rem 1rem', borderRadius: 8, marginTop: 8, color: '#8a1f1f' }}>
+            {String(status.error)}
+          </div>
+        )}
 
         {/* Download */}
         {downloadUrl && (
