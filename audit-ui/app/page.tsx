@@ -17,10 +17,12 @@ export default function Home() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "upload" | "job" | "poll">(null);
   const [error, setError] = useState<string | null>(null);
+  const [backendCfg, setBackendCfg] = useState<null | { job_runner: string; storage_backend: string }>(null);
   const [columns, setColumns] = useState<string[]>([]);
   const [targets, setTargets] = useState<string[]>([]);
   const [configText, setConfigText] = useState<string>("{}");
   const [configError, setConfigError] = useState<string | null>(null);
+  const [configEmpty, setConfigEmpty] = useState<boolean>(true);
   const [preview, setPreview] = useState<null | {
     rows_total: number;
     rows_kept: number;
@@ -39,6 +41,13 @@ export default function Home() {
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    // fetch backend runtime config for quick visibility
+    try {
+      axios.get(`${API}/config`).then((r) => {
+        const b = r.data || {};
+        setBackendCfg({ job_runner: String(b.job_runner || ''), storage_backend: String(b.storage_backend || '') });
+      }).catch(() => {});
+    } catch {}
     return () => {
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
@@ -219,6 +228,16 @@ export default function Home() {
       <p style={{ color: "#555" }}>
         Backend: <code>{API}</code>
       </p>
+      {backendCfg && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+          <span style={{ background: '#f3f3f3', border: '1px solid #e5e5e5', padding: '2px 8px', borderRadius: 12 }}>
+            Runner: <strong>{backendCfg.job_runner}</strong>
+          </span>
+          <span style={{ background: '#f3f3f3', border: '1px solid #e5e5e5', padding: '2px 8px', borderRadius: 12 }}>
+            Storage: <strong>{backendCfg.storage_backend}</strong>
+          </span>
+        </div>
+      )}
 
       {/* Errors */}
       {error && (
@@ -259,8 +278,11 @@ export default function Home() {
                   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                     throw new Error('targets_config must be a JSON object');
                   }
-                  setConfigError(null);
+                  const isEmpty = Object.keys(parsed).length === 0;
+                  setConfigEmpty(isEmpty);
+                  setConfigError(isEmpty ? 'targets_config cannot be empty' : null);
                 } catch (err: any) {
+                  setConfigEmpty(true);
                   setConfigError(err?.message || 'Invalid targets_config JSON');
                 }
               }}
@@ -281,7 +303,7 @@ export default function Home() {
           onChange={(e) => setFile(e.target.files?.[0] || null)}
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
-          <button onClick={handlePreview} disabled={!uploadId || previewBusy || !!configError}>
+          <button onClick={handlePreview} disabled={!uploadId || previewBusy || !!configError || configEmpty}>
             {previewBusy ? "Previewing..." : "Preview (top 10)"}
           </button>
           {preview && (

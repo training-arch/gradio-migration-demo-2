@@ -58,6 +58,44 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _startup_log():
+    runner = os.getenv("JOB_RUNNER", "background").strip().lower()
+    storage = os.getenv("STORAGE_BACKEND", "local").strip().lower()
+    try:
+        import logging
+        logging.getLogger("uvicorn.error").info(
+            "Startup config: JOB_RUNNER=%s STORAGE_BACKEND=%s CORS_ORIGINS=%s",
+            runner,
+            storage,
+            ",".join(origins),
+        )
+    except Exception:
+        print(f"Startup config: JOB_RUNNER={runner} STORAGE_BACKEND={storage} CORS_ORIGINS={origins}")
+
+
+@app.get("/config")
+def get_runtime_config():
+    """Return non-sensitive runtime configuration for debugging/UI hints."""
+    runner = os.getenv("JOB_RUNNER", "background").strip().lower()
+    storage = os.getenv("STORAGE_BACKEND", "local").strip().lower()
+    # Celery availability (best-effort)
+    celery_ok = False
+    try:
+        from .celery_app import app as celery_app  # type: ignore
+        celery_ok = bool(celery_app)
+    except Exception:
+        celery_ok = False
+
+    return {
+        "job_runner": runner,
+        "storage_backend": storage,
+        "cors_origins": origins,
+        "db_enabled": bool(SessionFactory),
+        "celery_enabled": celery_ok,
+    }
+
+
 
 # --- super tiny in-memory job registry ---
 JOBS: Dict[str, Dict[str, Any]] = {}
@@ -125,31 +163,13 @@ def create_job(payload: JobCreate, bg: BackgroundTasks):
         except Exception:
             pass
 
-    # Run job using configured runner (background/inline) or Celery when enabled
-    mode = (os.getenv("JOB_RUNNER", "background").strip().lower())
-    if mode == "celery":
-        try:
-            from .celery_app import app as celery_app  # type: ignore
-        except Exception:
-            celery_app = None  # type: ignore
-        if not celery_app:
-            raise HTTPException(
-                status_code=503,
-                detail="JOB_RUNNER=celery but Celery is not configured. Set CELERY_BROKER_URL (and optional CELERY_RESULT_BACKEND).",
-            )
-        # Submit Celery task; pass explicit paths so API can know output location without fetching result
-        task = celery_app.send_task(  # type: ignore[union-attr]
-            "run_job_task",
-            args=[str(upload_path), payload.targets_config, str(out_path)],
-        )
-        JOBS[job_id]["status"] = "PENDING"
-        JOBS[job_id]["progress"] = 0
-        JOBS[job_id]["celery_task_id"] = task.id
-        return {"job_id": job_id}
-
-    # default: background or inline via FastAPI runner
+    # Use configured runner (background/inline/celery)
     runner = get_job_runner(bg)
-    runner.submit(_run_job, job_id)
+    try:
+        runner.submit(_run_job, job_id)
+    except RuntimeError as e:
+        # Provide consistent HTTP surface when Celery is selected but not configured
+        raise HTTPException(status_code=503, detail=str(e))
     return {"job_id": job_id}
 
 @app.get("/jobs/{job_id}")

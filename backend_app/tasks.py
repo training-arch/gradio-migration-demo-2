@@ -48,16 +48,50 @@ class CeleryRunner(JobRunner):
     """
 
     def __init__(self) -> None:
-        # Defer import so environments without Celery aren't impacted.
+        # Lazy-resolve celery app; keep import optional
         self._err = (
-            "JOB_RUNNER=celery set, but Celery is not wired yet. "
-            "Add a Celery app and task to submit jobs, then update CeleryRunner.submit()."
+            "JOB_RUNNER=celery set, but Celery is not configured. "
+            "Set CELERY_BROKER_URL (and optional CELERY_RESULT_BACKEND) and ensure a worker is running."
         )
-        try:  # pragma: no cover
-            import celery  # noqa: F401
-        except Exception:
-            # Keep as stub; submit() will raise with guidance
-            pass
 
     def submit(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:  # pragma: no cover
-        raise RuntimeError(self._err)
+        try:
+            from .celery_app import app as celery_app  # type: ignore
+        except Exception:
+            celery_app = None  # type: ignore
+        if not celery_app:
+            raise RuntimeError(self._err)
+
+        # Special-case: when API passes the background job (_run_job, job_id)
+        job_id = None
+        if getattr(fn, "__name__", None) == "_run_job" and args:
+            job_id = args[0]
+        if not job_id:
+            # Fallback: execute inline if unexpected callable
+            # (keeps behavior predictable during development)
+            fn(*args, **kwargs)
+            return
+
+        # Import in-function to avoid import cycles at module load time
+        try:
+            from . import api as api_mod  # type: ignore
+        except Exception as e:
+            raise RuntimeError(f"CeleryRunner could not import API module to access JOBS: {e}")
+
+        job = api_mod.JOBS.get(job_id)
+        if not job:
+            raise RuntimeError(f"Unknown job_id: {job_id}")
+
+        upload_path = job.get("upload_path")
+        targets_config = job.get("targets_config")
+        result_path = job.get("result_path")
+        if not (upload_path and targets_config is not None and result_path):
+            raise RuntimeError("Job metadata incomplete; cannot submit to Celery")
+
+        task = celery_app.send_task(  # type: ignore[union-attr]
+            "run_job_task",
+            args=[str(upload_path), targets_config, str(result_path)],
+        )
+        job["celery_task_id"] = task.id
+        job["status"] = "PENDING"
+        job["progress"] = 0
