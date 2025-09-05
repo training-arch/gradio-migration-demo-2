@@ -5,6 +5,7 @@ __pycache__/
 
 # Python virtualenvs
 .venv/
+.venv*/
 venv/
 env/
 
@@ -22,3 +23,12 @@ uploads/
 results/
 *.xlsx
 
+# Test/build caches
+.pytest_cache/
+.coverage
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+.tox/
+dist/
+build/
