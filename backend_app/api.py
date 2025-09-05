@@ -15,6 +15,7 @@ from .engine import run_targets
 from .tasks import get_job_runner
 from .storage import get_storage
 from .db import get_session_factory
+from . import configs as cfgmod
 try:  # optional env loader for local dev
     from dotenv import load_dotenv  # type: ignore
     load_dotenv()
@@ -104,8 +105,50 @@ class JobCreate(BaseModel):
     upload_id: str
     targets_config: Dict[str, dict]
 
+
+class ConfigSave(BaseModel):
+    name: str
+    description: str | None = ""
+    targets_config: Dict[str, dict]
+
 @app.get("/healthz")
 def healthz():
+    return {"ok": True}
+
+
+@app.get("/configs")
+def list_configs():
+    items = cfgmod.list_configs(BASE_DIR)
+    return {
+        "items": [
+            {"name": c.name, "description": c.description, "updated_at": c.updated_at}
+            for c in items
+        ]
+    }
+
+
+@app.get("/configs/{name}")
+def get_config(name: str):
+    c = cfgmod.get_config(BASE_DIR, name)
+    if not c:
+        raise HTTPException(status_code=404, detail="config not found")
+    return {"name": c.name, "description": c.description, "updated_at": c.updated_at, "targets_config": c.targets_config}
+
+
+@app.post("/configs")
+def create_or_update_config(body: ConfigSave):
+    # basic validation on provided config shape
+    if not isinstance(body.targets_config, dict):
+        raise HTTPException(status_code=400, detail="targets_config must be an object")
+    saved = cfgmod.save_config(BASE_DIR, body.name, body.description or "", body.targets_config)
+    return {"ok": True, "name": saved.name, "updated_at": saved.updated_at}
+
+
+@app.delete("/configs/{name}")
+def delete_config(name: str):
+    ok = cfgmod.delete_config(BASE_DIR, name)
+    if not ok:
+        raise HTTPException(status_code=404, detail="config not found")
     return {"ok": True}
 
 @app.post("/uploads")

@@ -23,6 +23,10 @@ export default function Home() {
   const [configText, setConfigText] = useState<string>("{}");
   const [configError, setConfigError] = useState<string | null>(null);
   const [configEmpty, setConfigEmpty] = useState<boolean>(true);
+  const [mode, setMode] = useState<'preset' | 'builder'>('preset');
+  const [presets, setPresets] = useState<Array<{ name: string; description?: string; updated_at?: string }>>([]);
+  const [presetName, setPresetName] = useState<string>("");
+  const [presetDesc, setPresetDesc] = useState<string>("");
   const [preview, setPreview] = useState<null | {
     rows_total: number;
     rows_kept: number;
@@ -48,6 +52,13 @@ export default function Home() {
         setBackendCfg({ job_runner: String(b.job_runner || ''), storage_backend: String(b.storage_backend || '') });
       }).catch(() => {});
     } catch {}
+    // load saved presets list
+    try {
+      axios.get(`${API}/configs`).then((r) => {
+        const items = (r.data?.items || []) as Array<any>;
+        setPresets(items);
+      }).catch(() => {});
+    } catch {}
     return () => {
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
@@ -60,7 +71,11 @@ export default function Home() {
     setError(null);
     setColumns([]);
     setTargets([]);
-    setConfigText("{}");
+    if (mode === 'builder') {
+      setConfigText("{}");
+      setConfigEmpty(true);
+      setConfigError('targets_config cannot be empty');
+    }
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
       pollTimer.current = null;
@@ -253,19 +268,84 @@ export default function Home() {
         </h2>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ minWidth: 260 }}>
-            <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>Select Target Columns</label>
-            <select multiple value={targets} onChange={(e) => {
-              const opts = Array.from((e.target as HTMLSelectElement).selectedOptions).map(o => (o as HTMLOptionElement).value);
-              setTargets(opts);
-            }} style={{ width: "100%", minHeight: 120 }}>
-              {(columns || []).map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <button onClick={initConfigFromTargets} disabled={!uploadId || (targets.length === 0)} style={{ marginTop: 8 }}>
-              Initialize Config From Selection
-            </button>
+            {mode === 'builder' && (
+              <>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>Select Target Columns</label>
+                <select multiple value={targets} onChange={(e) => {
+                  const opts = Array.from((e.target as HTMLSelectElement).selectedOptions).map(o => (o as HTMLOptionElement).value);
+                  setTargets(opts);
+                }} style={{ width: "100%", minHeight: 120 }}>
+                  {(columns || []).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <button onClick={initConfigFromTargets} disabled={!uploadId || (targets.length === 0)} style={{ marginTop: 8 }}>
+                  Initialize Config From Selection
+                </button>
+              </>
+            )}
+            {/* Presets chooser */}
+            <div style={{ marginTop: 14 }}>
+              <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>Choose config</label>
+              <select value={presetName} onChange={async (e) => {
+                const name = (e.target as HTMLSelectElement).value;
+                setPresetName(name);
+                if (!name) return;
+                try {
+                  const res = await axios.get(`${API}/configs/${encodeURIComponent(name)}`);
+                  const tc = res.data?.targets_config || {};
+                  setPresetDesc(res.data?.description || "");
+                  setConfigText(JSON.stringify(tc, null, 2));
+                  const isEmpty = Object.keys(tc || {}).length === 0;
+                  setConfigEmpty(isEmpty);
+                  setConfigError(isEmpty ? 'targets_config cannot be empty' : null);
+                  setMode('preset');
+                } catch (err: any) {
+                  setError(err?.response?.data?.detail || err?.message || 'Failed to load config');
+                }
+              }} style={{ width: '100%' }}>
+                <option value="">-- Select saved config --</option>
+                {presets.map((p) => (
+                  <option key={p.name} value={p.name}>{p.name}</option>
+                ))}
+              </select>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={() => { setPresetName(""); setPresetDesc(""); setConfigText("{}"); setMode('builder'); setConfigEmpty(true); setConfigError('targets_config cannot be empty'); }}>
+                  + Create new
+                </button>
+                <button onClick={async () => {
+                  try {
+                    const parsed = JSON.parse(configText || "{}");
+                    if (!presetName.trim()) throw new Error('Please enter a config name below');
+                    await axios.post(`${API}/configs`, { name: presetName.trim(), description: presetDesc || "", targets_config: parsed });
+                    // refresh list
+                    const rl = await axios.get(`${API}/configs`);
+                    setPresets(rl.data?.items || []);
+                  } catch (e: any) {
+                    setError(e?.response?.data?.detail || e?.message || 'Save failed');
+                  }
+                }} disabled={!!configError || configEmpty}>
+                  Save config
+                </button>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <input placeholder="Config name" value={presetName} onChange={(e) => setPresetName((e.target as HTMLInputElement).value)} style={{ width: '100%', marginBottom: 6 }} />
+                <input placeholder="Description (optional)" value={presetDesc} onChange={(e) => setPresetDesc((e.target as HTMLInputElement).value)} style={{ width: '100%' }} />
+              </div>
+              {mode === 'preset' && (
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    onClick={handleJob}
+                    disabled={!uploadId || !presetName || !!configError || configEmpty || busy === 'job'}
+                    style={{ background: '#b9d6df', padding: '8px 14px', borderRadius: 6 }}
+                  >
+                    Let's process
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
+          {mode === 'builder' && (
           <div style={{ flex: 1, minWidth: 320 }}>
             <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>targets_config (JSON)</label>
             <textarea
@@ -296,6 +376,7 @@ export default function Home() {
               <div style={{ color: '#05620e', marginTop: 6 }}>JSON looks valid</div>
             )}
           </div>
+          )}
         </div>
         <input
           type="file"
