@@ -59,6 +59,7 @@ export default function Home() {
   const [presetName, setPresetName] = useState<string>("");
   const [presetDesc, setPresetDesc] = useState<string>("");
   const [presetUpdatedAt, setPresetUpdatedAt] = useState<string>("");
+  const [editingName, setEditingName] = useState<string | null>(null);
   const [preview, setPreview] = useState<null | {
     rows_total: number;
     rows_kept: number;
@@ -67,6 +68,8 @@ export default function Home() {
   }>(null);
   const [previewBusy, setPreviewBusy] = useState<boolean>(false);
   const [previewLimit, setPreviewLimit] = useState<number>(10);
+  const [previewAuto, setPreviewAuto] = useState<boolean>(false);
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Phase 2 builder state
   const [activeTarget, setActiveTarget] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState<Record<string, boolean>>({
@@ -217,6 +220,20 @@ export default function Home() {
       setPreviewBusy(false);
     }
   };
+
+  // Debounced auto-preview when enabled
+  useEffect(() => {
+    if (!previewAuto) return;
+    if (!uploadId || !!configError || configEmpty) return;
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(() => {
+      handlePreview().catch(() => {});
+    }, 600);
+    return () => {
+      if (previewTimer.current) clearTimeout(previewTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configText, previewLimit, uploadId]);
 
   // Helpers to parse and update the JSON in a single place
   const parseConfigSafe = (): { ok: true; data: any } | { ok: false; err: string } => {
@@ -455,7 +472,7 @@ export default function Home() {
                 ))}
               </select>
               <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => { setPresetName(""); setPresetDesc(""); setConfigText("{}"); setMode('builder'); setConfigEmpty(true); setConfigError('targets_config cannot be empty'); }}>
+                <button onClick={() => { setPresetName(""); setPresetDesc(""); setPresetUpdatedAt(""); setEditingName(null); setConfigText("{}"); setMode('builder'); setConfigEmpty(true); setConfigError('targets_config cannot be empty'); }}>
                   + Create new
                 </button>
                 <button onClick={async () => {
@@ -472,6 +489,9 @@ export default function Home() {
                 }} disabled={!!configError || configEmpty}>
                   Save config
                 </button>
+                <button onClick={() => { if (!presetName) return; setMode('builder'); setEditingName(presetName); }} disabled={!presetName}>
+                  Edit config
+                </button>
                 <button onClick={async () => {
                   try {
                     const nm = presetName.trim();
@@ -485,6 +505,7 @@ export default function Home() {
                     setPresetName("");
                     setPresetDesc("");
                     setPresetUpdatedAt("");
+                    setEditingName(null);
                   } catch (e: any) {
                     setError(e?.response?.data?.detail || e?.message || 'Delete failed');
                   }
@@ -517,6 +538,24 @@ export default function Home() {
           </div>
           {mode === 'builder' && (
           <div style={{ flex: 1, minWidth: 320, display: 'flex', gap: 12 }}>
+            {/* Editing banner */}
+            {editingName && (
+              <div style={{ position: 'absolute', transform: 'translateY(-140%)', background: '#f3f7ff', border: '1px solid #d6e2ff', borderRadius: 8, padding: '6px 10px', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontWeight: 600 }}>Editing:</span> <code>{editingName}</code>
+                <button onClick={async () => {
+                  try {
+                    const parsed = JSON.parse(configText || '{}');
+                    await axios.post(`${API}/configs`, { name: editingName, description: presetDesc || "", targets_config: parsed });
+                    const rl = await axios.get(`${API}/configs`);
+                    setPresets(rl.data?.items || []);
+                    setPresetName(editingName);
+                  } catch (e: any) {
+                    setError(e?.response?.data?.detail || e?.message || 'Save failed');
+                  }
+                }}>Save changes</button>
+                <button onClick={() => setEditingName(null)}>Stop editing</button>
+              </div>
+            )}
             {/* Left: targets list + mini preview */}
             <div style={{ width: 260 }}>
               <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Selected targets</label>
@@ -915,6 +954,10 @@ export default function Home() {
               <option value="20">20</option>
             </select>
           </label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }} title="Auto-run preview 600ms after changes">
+            <input type="checkbox" checked={previewAuto} onChange={(e) => setPreviewAuto((e.target as HTMLInputElement).checked)} />
+            Preview on change
+          </label>
           {preview && (
             <span>
               Kept {preview.rows_kept} of {preview.rows_total} rows
@@ -985,8 +1028,75 @@ export default function Home() {
       {/* Step 3: Status + Download */}
       <section style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
-          Step 3 - Status
+          Step 3 - Summary & Status
         </h2>
+
+        {/* Summary + Save/Run */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              placeholder="Config name"
+              value={presetName}
+              onChange={(e) => setPresetName((e.target as HTMLInputElement).value)}
+              style={{ flex: 1, minWidth: 200 }}
+            />
+            <input
+              placeholder="Description (optional)"
+              value={presetDesc}
+              onChange={(e) => setPresetDesc((e.target as HTMLInputElement).value)}
+              style={{ flex: 2, minWidth: 280 }}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={async () => {
+                try {
+                  const parsed = JSON.parse(configText || '{}');
+                  if (!presetName.trim()) throw new Error('Please enter a config name');
+                  await axios.post(`${API}/configs`, { name: presetName.trim(), description: presetDesc || "", targets_config: parsed });
+                  const rl = await axios.get(`${API}/configs`);
+                  setPresets(rl.data?.items || []);
+                } catch (e: any) {
+                  setError(e?.response?.data?.detail || e?.message || 'Save failed');
+                }
+              }} disabled={!!configError || configEmpty}>Save config</button>
+              <button onClick={handleJob} disabled={!uploadId || !!configError || configEmpty || busy === 'job'}>
+                {busy === 'job' ? 'Creating...' : 'Run job'}
+              </button>
+            </div>
+          </div>
+          {/* Readable per-target summary */}
+          <div style={{ border: '1px solid #eee', borderRadius: 8, padding: 10, background: '#fafafa' }}>
+            {(() => {
+              const res = parseConfigSafe();
+              if (!res.ok) return <div style={{ color: '#8a1f1f' }}>Invalid JSON: {res.err}</div>;
+              const cfg = res.data || {};
+              const keys = Object.keys(cfg || {});
+              if (keys.length === 0) return <div style={{ color: '#666' }}>No targets configured.</div>;
+              return (
+                <div>
+                  {keys.map((t) => {
+                    const c = cfg[t] || {};
+                    const wcPart = c.wc ? `WC >= ${Number(c.wc_min ?? 3)}` : 'WC OFF';
+                    const kwEnabled = !!(c.kw_flag?.enabled);
+                    const kwCount = Array.isArray(c.kw_flag?.phrases) ? c.kw_flag.phrases.length : 0;
+                    const kwFlags = [c.kw_flag?.mode || 'ANY', (c.kw_flag?.case_sensitive ? 'case' : 'nocase'), (c.kw_flag?.whole_word ? 'whole' : 'substr')].join(', ');
+                    const vfCols = Object.keys(c.filters || {});
+                    const vfPart = c.vf_on && vfCols.length ? `Filters: ${vfCols.map((col: string) => `${col}(${(c.filters?.[col]||[]).length})`).join(', ')} [${c.filter_mode || 'AND'}]` : 'Filters OFF';
+                    const tfCols = Object.keys(c.text_filters || {});
+                    const tfPart = c.tf_on && tfCols.length ? `Text: ${tfCols.map((col: string) => {
+                      const r = c.text_filters[col] || {}; const n = Array.isArray(r.phrases)? r.phrases.length : 0; const inc = r.include===false? 'exclude':'include'; const mode = r.mode || 'ANY'; const cs = r.case_sensitive? 'case':'nocase'; const ww = r.whole_word? 'whole':'substr'; return `${col}(${n}, ${inc}, ${mode}, ${cs}, ${ww})`; }).join('; ')} [${c.filter_mode || 'AND'}]` : 'Text OFF';
+                    const aiPart = c.ai ? (c.prompt ? 'AI ON' : 'AI ON (no prompt)') : 'AI OFF';
+                    return (
+                      <div key={t} style={{ padding: '6px 0', borderTop: '1px dashed #e8e8e8' }}>
+                        <div style={{ fontWeight: 600 }}>{t}</div>
+                        <div style={{ fontSize: 12, color: '#333' }}>{[aiPart, wcPart, kwEnabled ? `KW ${kwCount} (${kwFlags})` : 'KW OFF', vfPart, tfPart].join(' | ')}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button onClick={manualPoll} disabled={!jobId || busy === "poll"}>

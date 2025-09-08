@@ -10,6 +10,7 @@ import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
 from .engine import run_targets
 from .tasks import get_job_runner
@@ -37,7 +38,24 @@ RESULTS_DIR = BASE_DIR / "results"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Audit Engine API (Local)")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Log startup configuration (moved from deprecated on_event)
+    runner = os.getenv("JOB_RUNNER", "background").strip().lower()
+    storage = os.getenv("STORAGE_BACKEND", "local").strip().lower()
+    try:
+        import logging
+        logging.getLogger("uvicorn.error").info(
+            "Startup config: JOB_RUNNER=%s STORAGE_BACKEND=%s CORS_ORIGINS=%s",
+            runner,
+            storage,
+            ",".join(origins),
+        )
+    except Exception:
+        print(f"Startup config: JOB_RUNNER={runner} STORAGE_BACKEND={storage} CORS_ORIGINS={origins}")
+    yield
+
+app = FastAPI(title="Audit Engine API (Local)", lifespan=lifespan)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -59,20 +77,7 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def _startup_log():
-    runner = os.getenv("JOB_RUNNER", "background").strip().lower()
-    storage = os.getenv("STORAGE_BACKEND", "local").strip().lower()
-    try:
-        import logging
-        logging.getLogger("uvicorn.error").info(
-            "Startup config: JOB_RUNNER=%s STORAGE_BACKEND=%s CORS_ORIGINS=%s",
-            runner,
-            storage,
-            ",".join(origins),
-        )
-    except Exception:
-        print(f"Startup config: JOB_RUNNER={runner} STORAGE_BACKEND={storage} CORS_ORIGINS={origins}")
+## startup log moved into lifespan above
 
 
 @app.get("/config")
