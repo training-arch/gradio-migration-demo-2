@@ -9,6 +9,37 @@ type JobStatus = {
   error?: string | null;
 };
 
+function KeywordEditor({ phrases, onAdd, onRemove }: { phrases: string[]; onAdd: (p: string) => void; onRemove: (p: string) => void }) {
+  const [text, setText] = useState<string>("");
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={text}
+          onChange={(e) => setText((e.target as HTMLInputElement).value)}
+          placeholder="Add phrase"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              const v = text.trim();
+              if (v) { onAdd(v); setText(""); }
+            }
+          }}
+          style={{ flex: 1 }}
+        />
+        <button onClick={() => { const v = text.trim(); if (v) { onAdd(v); setText(""); } }}>Add</button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+        {(phrases || []).map((p) => (
+          <span key={p} style={{ background: '#eef', border: '1px solid #dde', borderRadius: 12, padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span>{p}</span>
+            <button onClick={() => onRemove(p)} style={{ fontSize: 12 }}>x</button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -34,6 +65,18 @@ export default function Home() {
     sample_rows: any[];
   }>(null);
   const [previewBusy, setPreviewBusy] = useState<boolean>(false);
+  // Phase 2 builder state
+  const [activeTarget, setActiveTarget] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState<Record<string, boolean>>({
+    ai: true,
+    wc: true,
+    kw: false,
+    vf: false,
+    tf: false,
+  });
+  const [valuesCache, setValuesCache] = useState<Record<string, string[]>>({});
+  const [vfExpander, setVfExpander] = useState<Record<string, boolean>>({});
+  const [tfExpander, setTfExpander] = useState<Record<string, boolean>>({});
   const statusLabel = status?.status || null;
   const statusBg = statusLabel === 'SUCCEEDED' ? '#e6f6ea' : statusLabel === 'FAILED' ? '#ffe9e9' : '#f3f3f3';
   const statusFg = statusLabel === 'SUCCEEDED' ? '#05620e' : statusLabel === 'FAILED' ? '#8a1f1f' : '#555';
@@ -134,6 +177,8 @@ export default function Home() {
     const cfg = buildDefaults(targets || []);
     setConfigText(JSON.stringify(cfg, null, 2));
     setConfigError(null);
+    setConfigEmpty(Object.keys(cfg).length === 0);
+    if ((targets || []).length > 0) setActiveTarget(targets[0]);
   };
 
   const handlePreview = async () => {
@@ -161,6 +206,91 @@ export default function Home() {
     } finally {
       setPreviewBusy(false);
     }
+  };
+
+  // Helpers to parse and update the JSON in a single place
+  const parseConfigSafe = (): { ok: true; data: any } | { ok: false; err: string } => {
+    try {
+      const parsed = JSON.parse(configText || "{}");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { ok: false, err: 'targets_config must be a JSON object' };
+      }
+      return { ok: true, data: parsed };
+    } catch (e: any) {
+      return { ok: false, err: e?.message || 'Invalid targets_config JSON' };
+    }
+  };
+
+  const stringifyAndSetConfig = (cfg: any) => {
+    const isEmpty = !cfg || Object.keys(cfg).length === 0;
+    setConfigText(JSON.stringify(cfg || {}, null, 2));
+    setConfigEmpty(isEmpty);
+    setConfigError(isEmpty ? 'targets_config cannot be empty' : null);
+  };
+
+  const updateConfig = (updater: (cfg: any) => void) => {
+    const res = parseConfigSafe();
+    if (!res.ok) {
+      setConfigError(res.err);
+      return;
+    }
+    const cfg = res.data || {};
+    updater(cfg);
+    stringifyAndSetConfig(cfg);
+  };
+
+  const ensureTargetDefaults = (cfg: any, t: string) => {
+    if (!cfg[t]) {
+      cfg[t] = {
+        ai: false,
+        prompt: "",
+        wc: true,
+        wc_min: 3,
+        kw_flag: { enabled: false, mode: "ANY", phrases: [] },
+        vf_on: false,
+        filters: {},
+        filter_mode: "AND",
+        tf_on: false,
+        text_filters: {},
+      };
+    } else {
+      // add missing keys without overriding
+      cfg[t].ai = Boolean(cfg[t].ai);
+      cfg[t].prompt = typeof cfg[t].prompt === 'string' ? cfg[t].prompt : '';
+      cfg[t].wc = cfg[t].wc === false ? false : true;
+      cfg[t].wc_min = Math.max(1, Math.min(20, Number(cfg[t].wc_min ?? 3)));
+      cfg[t].kw_flag = cfg[t].kw_flag || { enabled: false, mode: 'ANY', phrases: [] };
+      cfg[t].kw_flag.enabled = Boolean(cfg[t].kw_flag.enabled);
+      cfg[t].kw_flag.mode = (cfg[t].kw_flag.mode === 'ALL') ? 'ALL' : 'ANY';
+      cfg[t].kw_flag.phrases = Array.isArray(cfg[t].kw_flag.phrases) ? cfg[t].kw_flag.phrases : [];
+      cfg[t].vf_on = Boolean(cfg[t].vf_on);
+      cfg[t].filters = cfg[t].filters && typeof cfg[t].filters === 'object' ? cfg[t].filters : {};
+      cfg[t].filter_mode = (cfg[t].filter_mode === 'OR') ? 'OR' : 'AND';
+      cfg[t].tf_on = Boolean(cfg[t].tf_on);
+      cfg[t].text_filters = cfg[t].text_filters && typeof cfg[t].text_filters === 'object' ? cfg[t].text_filters : {};
+    }
+  };
+
+  const fetchValuesForColumn = async (col: string) => {
+    if (!uploadId || !col) return;
+    try {
+      const res = await axios.get(`${API}/uploads/${uploadId}/values`, { params: { column: col, limit: 200 } });
+      const vals: string[] = res.data?.values || [];
+      setValuesCache((prev) => ({ ...prev, [col]: vals }));
+    } catch (e) {
+      // leave cache empty; error shown globally on other actions if needed
+    }
+  };
+
+  const targetBadge = (cfg: any, t: string) => {
+    const c = (cfg && cfg[t]) || {};
+    const ai = c.ai ? 'AI ON' : 'AI OFF';
+    const wc = c.wc ? `WC ${c.wc_min ?? 3}` : 'WC OFF';
+    const kwCount = (c.kw_flag?.enabled && Array.isArray(c.kw_flag?.phrases)) ? c.kw_flag.phrases.length : 0;
+    const kw = (c.kw_flag?.enabled) ? (kwCount ? `KW ${kwCount}` : 'KW 0') : 'KW OFF';
+    const vf = c.vf_on ? `Filters ${Object.keys(c.filters || {}).length}` : 'Filters OFF';
+    const mode = (c.filter_mode === 'OR') ? 'Mode OR' : 'Mode AND';
+    return `${ai} | ${wc} | ${kw} | ${vf} | ${mode}`;
   };
 
   const handleJob = async () => {
@@ -346,36 +476,321 @@ export default function Home() {
             </div>
           </div>
           {mode === 'builder' && (
-          <div style={{ flex: 1, minWidth: 320 }}>
-            <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>targets_config (JSON)</label>
-            <textarea
-              value={configText}
-              onChange={(e) => {
-                const v = (e.target as HTMLTextAreaElement).value;
-                setConfigText(v);
-                try {
-                  const parsed = JSON.parse(v || '{}');
-                  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                    throw new Error('targets_config must be a JSON object');
-                  }
-                  const isEmpty = Object.keys(parsed).length === 0;
-                  setConfigEmpty(isEmpty);
-                  setConfigError(isEmpty ? 'targets_config cannot be empty' : null);
-                } catch (err: any) {
-                  setConfigEmpty(true);
-                  setConfigError(err?.message || 'Invalid targets_config JSON');
-                }
-              }}
-              rows={14}
-              style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
-              placeholder={'{ "ColumnName": { "wc": true } }'}
-            />
-            {configError ? (
-              <div style={{ color: '#8a1f1f', marginTop: 6 }}>Warning: {configError}</div>
-            ) : (
-              <div style={{ color: '#05620e', marginTop: 6 }}>JSON looks valid</div>
-            )}
+          <div style={{ flex: 1, minWidth: 320, display: 'flex', gap: 12 }}>
+            {/* Left: targets list + mini preview */}
+            <div style={{ width: 260 }}>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Selected targets</label>
+              <div style={{ border: '1px solid #eee', borderRadius: 8, overflow: 'hidden' }}>
+                {(() => {
+                  const res = parseConfigSafe();
+                  const cfg = res.ok ? res.data : {};
+                  const keys = Object.keys(cfg || {});
+                  if (keys.length === 0) return <div style={{ padding: 8, color: '#666' }}>No targets yet</div>;
+                  return (
+                    <div>
+                      {keys.map((t) => (
+                        <div key={t} style={{ borderBottom: '1px solid #f5f5f5', padding: 8, background: activeTarget === t ? '#eef6ff' : '#fff', cursor: 'pointer' }} onClick={() => setActiveTarget(t)}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ fontWeight: 600 }}>{t}</div>
+                            <button onClick={(e) => { e.stopPropagation(); setActiveTarget(t); }} style={{ fontSize: 12 }}>Edit rules</button>
+                          </div>
+                          <div style={{ color: '#555', fontSize: 12, marginTop: 4 }}>{targetBadge(cfg, t)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+              {/* Simple mini preview of active target values (from last preview) */}
+              {preview && activeTarget && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Column preview: {activeTarget}</div>
+                  <div style={{ border: '1px solid #eee', borderRadius: 8, padding: 6, maxHeight: 160, overflow: 'auto', background: '#fafafa' }}>
+                    {preview.sample_rows.slice(0, 8).map((r, i) => (
+                      <div key={i} style={{ fontSize: 12, borderBottom: '1px dashed #eee', padding: '2px 0' }}>{String(r[activeTarget] ?? '')}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Right: side panel for active target */}
+            <div style={{ flex: 1 }}>
+              {!activeTarget && (
+                <div style={{ color: '#666' }}>Pick a target from the left to edit rules.</div>
+              )}
+              {activeTarget && (() => {
+                const res = parseConfigSafe();
+                if (!res.ok) return <div style={{ color: '#8a1f1f' }}>Invalid JSON: {res.err}</div>;
+                const cfg = res.data;
+                ensureTargetDefaults(cfg, activeTarget);
+                const tcfg = cfg[activeTarget];
+                const toggle = (key: keyof typeof panelOpen) => setPanelOpen((p) => ({ ...p, [key]: !p[key] }));
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* AI prompt */}
+                    <div style={{ border: '1px solid #eee', borderRadius: 8 }}>
+                      <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => toggle('ai')}>
+                        <div style={{ fontWeight: 600 }}>AI prompt</div>
+                        <div>{panelOpen.ai ? '▾' : '▸'}</div>
+                      </div>
+                      {panelOpen.ai && (
+                        <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={!!tcfg.ai} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].ai = (e.target as HTMLInputElement).checked; })} />
+                            Enable AI rule
+                          </label>
+                          <div style={{ marginTop: 6 }}>
+                            <textarea
+                              value={tcfg.prompt || ''}
+                              onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].prompt = (e.target as HTMLTextAreaElement).value; })}
+                              rows={4}
+                              placeholder="Write a check for the field. Supports {Field_Name}, {Field_Value}, {Normalized_Column_Name}"
+                              style={{ width: '100%' }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Word count */}
+                    <div style={{ border: '1px solid #eee', borderRadius: 8 }}>
+                      <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => toggle('wc')}>
+                        <div style={{ fontWeight: 600 }}>Word count</div>
+                        <div>{panelOpen.wc ? '▾' : '▸'}</div>
+                      </div>
+                      {panelOpen.wc && (
+                        <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={!!tcfg.wc} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].wc = (e.target as HTMLInputElement).checked; })} />
+                            Enable word count
+                          </label>
+                          <div style={{ marginTop: 6 }}>
+                            <input type="range" min={1} max={20} value={Number(tcfg.wc_min ?? 3)} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].wc_min = Math.max(1, Math.min(20, Number((e.target as HTMLInputElement).value) || 1)); })} />
+                            <div style={{ fontSize: 12, color: '#555' }}>Minimum words: <strong>{Number(tcfg.wc_min ?? 3)}</strong></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Keyword flag */}
+                    <div style={{ border: '1px solid #eee', borderRadius: 8 }}>
+                      <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => toggle('kw')}>
+                        <div style={{ fontWeight: 600 }}>Keyword flag</div>
+                        <div>{panelOpen.kw ? '▾' : '▸'}</div>
+                      </div>
+                      {panelOpen.kw && (
+                        <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={!!tcfg.kw_flag?.enabled} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.enabled = (e.target as HTMLInputElement).checked; })} />
+                            Enable keyword flag
+                          </label>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                            <label>Mode</label>
+                            <select value={tcfg.kw_flag?.mode || 'ANY'} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.mode = ((e.target as HTMLSelectElement).value === 'ALL') ? 'ALL' : 'ANY'; })}>
+                              <option value="ANY">ANY</option>
+                              <option value="ALL">ALL</option>
+                            </select>
+                          </div>
+                          <div style={{ marginTop: 8 }}>
+                            <KeywordEditor
+                              phrases={Array.isArray(tcfg.kw_flag?.phrases) ? tcfg.kw_flag.phrases : []}
+                              onAdd={(p) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const arr = Array.isArray(c[activeTarget].kw_flag.phrases) ? c[activeTarget].kw_flag.phrases : []; if (p.trim() && !arr.includes(p.trim())) { arr.push(p.trim()); } })}
+                              onRemove={(p) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.phrases = (c[activeTarget].kw_flag.phrases || []).filter((x: string) => x !== p); })}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Value filters */}
+                    <div style={{ border: '1px solid #eee', borderRadius: 8 }}>
+                      <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => toggle('vf')}>
+                        <div style={{ fontWeight: 600 }}>Value filters</div>
+                        <div>{panelOpen.vf ? '▾' : '▸'}</div>
+                      </div>
+                      {panelOpen.vf && (
+                        <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={!!tcfg.vf_on} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].vf_on = (e.target as HTMLInputElement).checked; })} />
+                            Enable value filters
+                          </label>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                            <label>Combine across columns</label>
+                            <select value={tcfg.filter_mode || 'AND'} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].filter_mode = ((e.target as HTMLSelectElement).value === 'OR') ? 'OR' : 'AND'; })}>
+                              <option value="AND">AND</option>
+                              <option value="OR">OR</option>
+                            </select>
+                          </div>
+                          <div style={{ marginTop: 8 }}>
+                            <label>Add column</label>
+                            <select defaultValue="" onChange={async (e) => {
+                              const col = (e.target as HTMLSelectElement).value;
+                              if (!col) return;
+                              await fetchValuesForColumn(col);
+                              setVfExpander((p) => ({ ...p, [col]: true }));
+                              updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const f = c[activeTarget].filters || {}; if (!f[col]) f[col] = []; c[activeTarget].filters = f; });
+                              (e.target as HTMLSelectElement).value = '';
+                            }}>
+                              <option value="">-- choose column --</option>
+                              {columns.map((c) => (<option key={c} value={c}>{c}</option>))}
+                            </select>
+                          </div>
+                          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {Object.keys(tcfg.filters || {}).map((col) => (
+                              <div key={col} style={{ border: '1px dashed #ddd', borderRadius: 6 }}>
+                                <div style={{ padding: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={async () => { if (!valuesCache[col]) await fetchValuesForColumn(col); setVfExpander((p) => ({ ...p, [col]: !p[col] })); }}>
+                                  <div style={{ fontWeight: 600 }}>{col}</div>
+                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                    <span style={{ fontSize: 12, color: '#555' }}>{(tcfg.filters?.[col] || []).length} selected</span>
+                                    <button onClick={(e) => { e.stopPropagation(); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const f = c[activeTarget].filters || {}; delete f[col]; c[activeTarget].filters = f; }); }}>Remove</button>
+                                    <span>{vfExpander[col] ? '▾' : '▸'}</span>
+                                  </div>
+                                </div>
+                                {vfExpander[col] && (
+                                  <div style={{ padding: 8, borderTop: '1px dashed #eee', maxHeight: 180, overflow: 'auto', background: '#fafafa' }}>
+                                    {(valuesCache[col] || []).map((v) => {
+                                      const checked = (tcfg.filters?.[col] || []).includes(v);
+                                      return (
+                                        <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
+                                          <input type="checkbox" checked={checked} onChange={(e) => updateConfig((c) => {
+                                            ensureTargetDefaults(c, activeTarget);
+                                            const arr = Array.isArray(c[activeTarget].filters?.[col]) ? c[activeTarget].filters[col] : [];
+                                            if ((e.target as HTMLInputElement).checked) {
+                                              if (!arr.includes(v)) arr.push(v);
+                                            } else {
+                                              c[activeTarget].filters[col] = arr.filter((x: string) => x !== v);
+                                            }
+                                            const f = c[activeTarget].filters || {};
+                                            f[col] = Array.from(new Set(f[col] || []));
+                                            c[activeTarget].filters = f;
+                                          })} />
+                                          <span>{String(v)}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Text filters */}
+                    <div style={{ border: '1px solid #eee', borderRadius: 8 }}>
+                      <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => toggle('tf')}>
+                        <div style={{ fontWeight: 600 }}>Text filters</div>
+                        <div>{panelOpen.tf ? '▾' : '▸'}</div>
+                      </div>
+                      {panelOpen.tf && (
+                        <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <input type="checkbox" checked={!!tcfg.tf_on} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].tf_on = (e.target as HTMLInputElement).checked; })} />
+                            Enable text filters
+                          </label>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                            <label>Combine across columns</label>
+                            <select value={tcfg.filter_mode || 'AND'} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].filter_mode = ((e.target as HTMLSelectElement).value === 'OR') ? 'OR' : 'AND'; })}>
+                              <option value="AND">AND</option>
+                              <option value="OR">OR</option>
+                            </select>
+                          </div>
+                          <div style={{ marginTop: 8 }}>
+                            <label>Add column</label>
+                            <select defaultValue="" onChange={(e) => {
+                              const col = (e.target as HTMLSelectElement).value;
+                              if (!col) return;
+                              setTfExpander((p) => ({ ...p, [col]: true }));
+                              updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; if (!tf[col]) tf[col] = { mode: 'ANY', phrases: [], include: true }; c[activeTarget].text_filters = tf; });
+                              (e.target as HTMLSelectElement).value = '';
+                            }}>
+                              <option value="">-- choose column --</option>
+                              {columns.map((c) => (<option key={c} value={c}>{c}</option>))}
+                            </select>
+                          </div>
+                          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {Object.keys(tcfg.text_filters || {}).map((col) => {
+                              const row = tcfg.text_filters[col] || { mode: 'ANY', phrases: [], include: true };
+                              const phrases = Array.isArray(row.phrases) ? row.phrases : [];
+                              return (
+                                <div key={col} style={{ border: '1px dashed #ddd', borderRadius: 6 }}>
+                                  <div style={{ padding: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => setTfExpander((p) => ({ ...p, [col]: !p[col] }))}>
+                                    <div style={{ fontWeight: 600 }}>{col}</div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      <span style={{ fontSize: 12, color: '#555' }}>{phrases.length} phrases</span>
+                                      <button onClick={(e) => { e.stopPropagation(); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; delete tf[col]; c[activeTarget].text_filters = tf; }); }}>Remove</button>
+                                      <span>{tfExpander[col] ? '▾' : '▸'}</span>
+                                    </div>
+                                  </div>
+                                  {tfExpander[col] && (
+                                    <div style={{ padding: 8, borderTop: '1px dashed #eee', background: '#fafafa' }}>
+                                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                          <input type="checkbox" checked={!!row.include} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.include = (e.target as HTMLInputElement).checked; tf[col] = r; c[activeTarget].text_filters = tf; })} />
+                                          Include (unchecked = exclude)
+                                        </label>
+                                        <label>Mode</label>
+                                        <select value={row.mode || 'ANY'} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.mode = ((e.target as HTMLSelectElement).value === 'ALL') ? 'ALL' : 'ANY'; tf[col] = r; c[activeTarget].text_filters = tf; })}>
+                                          <option value="ANY">ANY</option>
+                                          <option value="ALL">ALL</option>
+                                        </select>
+                                      </div>
+                                      <div style={{ marginTop: 8 }}>
+                                        <KeywordEditor
+                                          phrases={phrases}
+                                          onAdd={(p) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; if (p.trim() && !r.phrases.includes(p.trim())) r.phrases.push(p.trim()); tf[col] = r; c[activeTarget].text_filters = tf; })}
+                                          onRemove={(p) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.phrases = (r.phrases || []).filter((x: string) => x !== p); tf[col] = r; c[activeTarget].text_filters = tf; })}
+                                        />
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
+          )}
+          {/* Keep the raw JSON editor visible for now (developer aid) */}
+          {mode === 'builder' && (
+            <div style={{ marginTop: 10, width: '100%' }}>
+              <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>targets_config (JSON)</label>
+              <textarea
+                value={configText}
+                onChange={(e) => {
+                  const v = (e.target as HTMLTextAreaElement).value;
+                  setConfigText(v);
+                  try {
+                    const parsed = JSON.parse(v || '{}');
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                      throw new Error('targets_config must be a JSON object');
+                    }
+                    const isEmpty = Object.keys(parsed).length === 0;
+                    setConfigEmpty(isEmpty);
+                    setConfigError(isEmpty ? 'targets_config cannot be empty' : null);
+                  } catch (err: any) {
+                    setConfigEmpty(true);
+                    setConfigError(err?.message || 'Invalid targets_config JSON');
+                  }
+                }}
+                rows={14}
+                style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
+                placeholder={'{ "ColumnName": { "wc": true } }'}
+              />
+              {configError ? (
+                <div style={{ color: '#8a1f1f', marginTop: 6 }}>Warning: {configError}</div>
+              ) : (
+                <div style={{ color: '#05620e', marginTop: 6 }}>JSON looks valid</div>
+              )}
+            </div>
           )}
         </div>
         <input
