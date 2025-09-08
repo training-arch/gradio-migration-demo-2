@@ -396,6 +396,19 @@ export default function Home() {
     }
   };
 
+  const step1Ref = useRef<HTMLDivElement | null>(null);
+  const step3Ref = useRef<HTMLDivElement | null>(null);
+
+  const Stepper = ({ active }: { active: 1 | 2 | 3 }) => (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+      {[1,2,3].map((n) => (
+        <div key={n} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid #ddd', background: active === n ? '#eef6ff' : '#f7f7f7', fontWeight: active === n ? 700 : 500 }}>
+          {`Step ${n}`}
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <main style={{ padding: "2rem", fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif", maxWidth: 800, margin: "0 auto" }}>
       <h1 style={{ fontSize: "1.75rem", fontWeight: 700, marginBottom: "0.5rem" }}>
@@ -423,10 +436,11 @@ export default function Home() {
       )}
 
       {/* Step 1: Upload */}
-      <section style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
+      <section ref={step1Ref} style={{ marginTop: "1.5rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
           Step 1 - Upload Excel
         </h2>
+        {mode === 'builder' && <Stepper active={1} />}
         <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ minWidth: 260 }}>
             {mode === 'builder' && (
@@ -471,6 +485,7 @@ export default function Home() {
                   <option key={p.name} value={p.name}>{p.name}</option>
                 ))}
               </select>
+              
               <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                 <button onClick={() => { setPresetName(""); setPresetDesc(""); setPresetUpdatedAt(""); setEditingName(null); setConfigText("{}"); setMode('builder'); setConfigEmpty(true); setConfigError('targets_config cannot be empty'); }}>
                   + Create new
@@ -651,6 +666,11 @@ export default function Home() {
 
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <Stepper active={2} />
+                    {/* Rule summary for active target */}
+                    <div style={{ background: '#f7fafc', border: '1px solid #e7eef6', borderRadius: 8, padding: 8, color: '#334' }}>
+                      <strong>{activeTarget}</strong>: {targetBadge(cfg, activeTarget)}
+                    </div>
                     {/* AI prompt */}
                     <div style={{ border: '1px solid #eee', borderRadius: 8 }}>
                       <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => toggle('ai')}>
@@ -903,39 +923,6 @@ export default function Home() {
             </div>
           </div>
           )}
-          {/* Keep the raw JSON editor visible for now (developer aid) */}
-          {mode === 'builder' && (
-            <div style={{ marginTop: 10, width: '100%' }}>
-              <label style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>targets_config (JSON)</label>
-              <textarea
-                value={configText}
-                onChange={(e) => {
-                  const v = (e.target as HTMLTextAreaElement).value;
-                  setConfigText(v);
-                  try {
-                    const parsed = JSON.parse(v || '{}');
-                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                      throw new Error('targets_config must be a JSON object');
-                    }
-                    const isEmpty = Object.keys(parsed).length === 0;
-                    setConfigEmpty(isEmpty);
-                    setConfigError(isEmpty ? 'targets_config cannot be empty' : null);
-                  } catch (err: any) {
-                    setConfigEmpty(true);
-                    setConfigError(err?.message || 'Invalid targets_config JSON');
-                  }
-                }}
-                rows={14}
-                style={{ width: "100%", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}
-                placeholder={'{ "ColumnName": { "wc": true } }'}
-              />
-              {configError ? (
-                <div style={{ color: '#8a1f1f', marginTop: 6 }}>Warning: {configError}</div>
-              ) : (
-                <div style={{ color: '#05620e', marginTop: 6 }}>JSON looks valid</div>
-              )}
-            </div>
-          )}
         </div>
         <input
           type="file"
@@ -1025,13 +1012,18 @@ export default function Home() {
         )}
       </section>
 
-      {/* Step 3: Status + Download */}
-      <section style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
+      {/* Step 3: Summary & Status */}
+      <section ref={step3Ref} style={{ marginTop: "1rem", padding: "1rem", border: "1px solid #eee", borderRadius: 10 }}>
         <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "0.75rem" }}>
           Step 3 - Summary & Status
         </h2>
+        <Stepper active={3} />
 
         {/* Summary + Save/Run */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ fontWeight: 600 }}>Review and finish</div>
+          <button onClick={() => { if (step1Ref.current) step1Ref.current.scrollIntoView({ behavior: 'smooth' }); }}>Back to edit</button>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
@@ -1123,12 +1115,18 @@ export default function Home() {
           </div>
         )}
 
-        {/* Download */}
-        {downloadUrl && (
-          <div style={{ marginTop: 12 }}>
-            <a href={downloadUrl} download="mistakes_only.xlsx">
-              Download Result
-            </a>
+        {/* Result panel */}
+        {status?.status === 'SUCCEEDED' && downloadUrl && (
+          <div style={{ marginTop: 16, padding: 16, border: '1px solid #d9ebdf', background: '#f1fbf5', borderRadius: 10 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Your file is ready</div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <a href={downloadUrl} download="mistakes_only.xlsx" style={{ background: '#b9d6df', padding: '8px 14px', borderRadius: 6 }}>
+                Save file
+              </a>
+              <button onClick={() => { if (step1Ref.current) step1Ref.current.scrollIntoView({ behavior: 'smooth' }); }}>
+                Go back home
+              </button>
+            </div>
           </div>
         )}
       </section>
