@@ -85,6 +85,12 @@ Preview
     - `per_target_counts`: object mapping each target to its kept-row count.
     - `sample_rows`: array of up to `limit` record dicts (includes the “Mistakes” columns for configured targets).
 
+Environment knobs
+
+- `JOB_RUNNER=background|inline` (default `background`): execution strategy.
+- `STORAGE_BACKEND=local` (default): file download implementation.
+- `CORS_ORIGINS` (comma-separated): allowed origins for the UI.
+
 ## Status/progress rules
 
 - `PENDING` on creation, `RUNNING` while processing, `SUCCEEDED` on success, `FAILED` on exceptions.

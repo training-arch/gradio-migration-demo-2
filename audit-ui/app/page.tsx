@@ -58,6 +58,7 @@ export default function Home() {
   const [presets, setPresets] = useState<Array<{ name: string; description?: string; updated_at?: string }>>([]);
   const [presetName, setPresetName] = useState<string>("");
   const [presetDesc, setPresetDesc] = useState<string>("");
+  const [presetUpdatedAt, setPresetUpdatedAt] = useState<string>("");
   const [preview, setPreview] = useState<null | {
     rows_total: number;
     rows_kept: number;
@@ -438,6 +439,7 @@ export default function Home() {
                   const res = await axios.get(`${API}/configs/${encodeURIComponent(name)}`);
                   const tc = res.data?.targets_config || {};
                   setPresetDesc(res.data?.description || "");
+                  setPresetUpdatedAt(String(res.data?.updated_at || ""));
                   setConfigText(JSON.stringify(tc, null, 2));
                   const isEmpty = Object.keys(tc || {}).length === 0;
                   setConfigEmpty(isEmpty);
@@ -452,7 +454,7 @@ export default function Home() {
                   <option key={p.name} value={p.name}>{p.name}</option>
                 ))}
               </select>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                 <button onClick={() => { setPresetName(""); setPresetDesc(""); setConfigText("{}"); setMode('builder'); setConfigEmpty(true); setConfigError('targets_config cannot be empty'); }}>
                   + Create new
                 </button>
@@ -472,13 +474,17 @@ export default function Home() {
                 </button>
                 <button onClick={async () => {
                   try {
-                    if (!presetName.trim()) throw new Error('Choose a config to delete');
-                    await axios.delete(`${API}/configs/${encodeURIComponent(presetName.trim())}`);
+                    const nm = presetName.trim();
+                    if (!nm) throw new Error('Choose a config to delete');
+                    if (!window.confirm(`Delete config "${nm}"? This cannot be undone.`)) return;
+                    await axios.delete(`${API}/configs/${encodeURIComponent(nm)}`);
                     const rl = await axios.get(`${API}/configs`);
                     setPresets(rl.data?.items || []);
                     // move to builder, keep current JSON for editing
                     setMode('builder');
                     setPresetName("");
+                    setPresetDesc("");
+                    setPresetUpdatedAt("");
                   } catch (e: any) {
                     setError(e?.response?.data?.detail || e?.message || 'Delete failed');
                   }
@@ -489,6 +495,12 @@ export default function Home() {
               <div style={{ marginTop: 6 }}>
                 <input placeholder="Config name" value={presetName} onChange={(e) => setPresetName((e.target as HTMLInputElement).value)} style={{ width: '100%', marginBottom: 6 }} />
                 <input placeholder="Description (optional)" value={presetDesc} onChange={(e) => setPresetDesc((e.target as HTMLInputElement).value)} style={{ width: '100%' }} />
+                {(presetName || presetDesc || presetUpdatedAt) && (
+                  <div style={{ color: '#555', fontSize: 12, marginTop: 6 }}>
+                    {presetDesc && (<span>Description: <em>{presetDesc}</em></span>)}
+                    {presetUpdatedAt && (<span> {presetDesc ? '• ' : ''}Updated: {new Date(presetUpdatedAt).toLocaleString()}</span>)}
+                  </div>
+                )}
               </div>
               {mode === 'preset' && (
                 <div style={{ marginTop: 12 }}>
@@ -665,11 +677,11 @@ export default function Home() {
                             </select>
                           </div>
                           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 6 }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Case-sensitive matching (default off)">
                               <input type="checkbox" checked={!!tcfg.kw_flag?.case_sensitive} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.case_sensitive = (e.target as HTMLInputElement).checked; })} />
                               Match case
                             </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Match whole words/phrases using word boundaries (default off)">
                               <input type="checkbox" checked={!!tcfg.kw_flag?.whole_word} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.whole_word = (e.target as HTMLInputElement).checked; })} />
                               Match whole word
                             </label>
@@ -809,7 +821,7 @@ export default function Home() {
                                   {tfExpander[col] && (
                                     <div style={{ padding: 8, borderTop: '1px dashed #eee', background: '#fafafa' }}>
                                       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Include: keep rows matching phrases. Unchecked: exclude rows matching phrases.">
                                           <input type="checkbox" checked={!!row.include} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.include = (e.target as HTMLInputElement).checked; tf[col] = r; c[activeTarget].text_filters = tf; })} />
                                           Include (unchecked = exclude)
                                         </label>
@@ -818,11 +830,11 @@ export default function Home() {
                                           <option value="ANY">ANY</option>
                                           <option value="ALL">ALL</option>
                                         </select>
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Case-sensitive matching (default off)">
                                           <input type="checkbox" checked={!!row.case_sensitive} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.case_sensitive = (e.target as HTMLInputElement).checked; tf[col] = r; c[activeTarget].text_filters = tf; })} />
                                           Match case
                                         </label>
-                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }} title="Match whole words/phrases using word boundaries (default off)">
                                           <input type="checkbox" checked={!!row.whole_word} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.whole_word = (e.target as HTMLInputElement).checked; tf[col] = r; c[activeTarget].text_filters = tf; })} />
                                           Match whole word
                                         </label>
