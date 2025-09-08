@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import axios from "axios";
 
@@ -45,6 +45,48 @@ function KeywordEditor({ phrases, onAdd, onRemove }: { phrases: string[]; onAdd:
   );
 }
 
+function PreviewCell({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflow, setOverflow] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (expanded) { setOverflow(true); return; }
+    // Measure after paint
+    const id = requestAnimationFrame(() => {
+      try { setOverflow(el.scrollHeight > el.clientHeight + 1); } catch {}
+    });
+    return () => cancelAnimationFrame(id);
+  }, [text, expanded]);
+
+  const baseTextStyle: React.CSSProperties = {
+    whiteSpace: 'pre-wrap',
+    lineHeight: 1.5,
+  };
+  const clampStyle: React.CSSProperties = expanded
+    ? {}
+    : { maxHeight: '3.2em', overflow: 'hidden' };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <div ref={ref} style={{ ...baseTextStyle, ...clampStyle }}>{text}</div>
+      {!expanded && overflow && (
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, textAlign: 'right',
+                       background: 'linear-gradient(180deg, rgba(255,255,255,0) 0%, #fff 40%)' }}>
+          <button onClick={() => setExpanded(true)} style={{ border: 'none', background: 'none', color: '#0b66c3', cursor: 'pointer', fontSize: 12 }}>… see more</button>
+        </div>
+      )}
+      {expanded && overflow && (
+        <div style={{ textAlign: 'right', marginTop: 4 }}>
+          <button onClick={() => setExpanded(false)} style={{ border: 'none', background: 'none', color: '#0b66c3', cursor: 'pointer', fontSize: 12 }}>see less</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const defaultTarget = () => ({
   ai: false,
   prompt: "",
@@ -60,6 +102,7 @@ const defaultTarget = () => ({
 
 export default function BuilderStep2() {
   const sp = useSearchParams();
+  const router = useRouter();
   const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
   const [uploadId, setUploadId] = useState<string | null>(null);
@@ -74,6 +117,8 @@ export default function BuilderStep2() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewLimit, setPreviewLimit] = useState(5);
   const [error, setError] = useState<string | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const leftScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Inbound state: uploadId, targets from sessionStorage
   useEffect(() => {
@@ -144,6 +189,15 @@ export default function BuilderStep2() {
     setCfg((prev) => { const next = { ...prev }; updater(next); return next; });
   };
 
+  // Persist config for Step 3
+  useEffect(() => {
+    try { sessionStorage.setItem('builder.targetsConfig', JSON.stringify(cfg || {})); } catch {}
+  }, [cfg]);
+
+  const canGoStep3 = useMemo(() => {
+    return Boolean(uploadId && targets && targets.length > 0 && Object.keys(cfg || {}).length > 0);
+  }, [uploadId, targets, cfg]);
+
   return (
     <main style={{ padding: '2rem', fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif', maxWidth: 1100, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Edit rules</h1>
@@ -158,9 +212,10 @@ export default function BuilderStep2() {
         <div style={{ background: '#ffe9e9', border: '1px solid #f5b5b5', padding: '0.75rem 1rem', borderRadius: 8, marginBottom: 12, color: '#8a1f1f' }}>{error}</div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16 }}>
-        {/* Left: targets with previews */}
-        <div>
+      {/* Workspace: fixed height; only left column scrolls */}
+      <div ref={workspaceRef} style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, height: 'calc(100vh - 180px)' }}>
+        {/* Left: targets with previews (scrollable) */}
+        <div ref={leftScrollRef} style={{ height: '100%', overflow: 'auto', paddingRight: 8 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
             <button onClick={handlePreview} disabled={!uploadId || previewBusy}>
               {previewBusy ? 'Previewing…' : `Preview (top ${previewLimit})`}
@@ -177,10 +232,10 @@ export default function BuilderStep2() {
           </div>
 
           {(targets || []).map((t) => (
-            <div key={t} style={{ border: '1px solid #eee', borderRadius: 10, padding: 12, marginBottom: 12 }}>
+            <div key={t} id={`card-${t}`} style={{ border: '1px solid #eee', borderRadius: 10, padding: 12, marginBottom: 12, background: '#fff' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ fontWeight: 700 }}>{t}</div>
-                <button onClick={() => setActiveTarget(t)} style={{ background: '#555', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>Edit rules</button>
+                <button onClick={() => { setActiveTarget(t); try { document.getElementById(`card-${t}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {} }} style={{ background: '#555', color: '#fff', padding: '4px 8px', borderRadius: 4 }}>Edit rules</button>
               </div>
               <div style={{ color: '#666', fontSize: 12, margin: '6px 0 8px' }}>Preview of {previewLimit} rows</div>
               <div style={{ border: '1px solid #ddd', borderRadius: 6, overflow: 'hidden' }}>
@@ -191,14 +246,24 @@ export default function BuilderStep2() {
                       const rows = (preview?.sample_rows || []).slice(0, previewLimit);
                       if (rows.length > 0) {
                         return rows.map((r, i) => (
-                          <tr key={i}><td style={{ padding: 6, borderBottom: '1px solid #f2f2f2' }}>{String(r[t] ?? '')}</td></tr>
+                          <tr key={i}>
+                            <td style={{ padding: 6, borderBottom: '1px solid #f2f2f2' }}>
+                              <PreviewCell text={String(r[t] ?? '')} />
+                            </td>
+                          </tr>
                         ));
                       }
                       const vals = valuesCache[t] || [];
                       if (!vals.length && !valuesLoading[t]) fetchValues(t);
                       if (valuesLoading[t]) return (<tr><td style={{ padding: 6 }}>Loading…</td></tr>);
                       if (!vals.length) return (<tr><td style={{ padding: 6, color: '#666' }}>No values available</td></tr>);
-                      return vals.slice(0, previewLimit).map((v, i) => (<tr key={i}><td style={{ padding: 6, borderBottom: '1px solid #f2f2f2' }}>{String(v)}</td></tr>));
+                      return vals.slice(0, previewLimit).map((v, i) => (
+                        <tr key={i}>
+                          <td style={{ padding: 6, borderBottom: '1px solid #f2f2f2' }}>
+                            <PreviewCell text={String(v)} />
+                          </td>
+                        </tr>
+                      ));
                     })()}
                   </tbody>
                 </table>
@@ -208,12 +273,18 @@ export default function BuilderStep2() {
           ))}
 
           <div style={{ marginTop: 12, textAlign: 'right' }}>
-            <button disabled style={{ background: '#dbe7ec', padding: '10px 16px', borderRadius: 6, minWidth: 220, cursor: 'not-allowed' }}>Go to Step 3 →</button>
+            <button
+              onClick={() => { if (canGoStep3 && uploadId) router.push(`/builder/step3?uploadId=${encodeURIComponent(uploadId)}`); }}
+              disabled={!canGoStep3}
+              style={{ background: canGoStep3 ? '#b9d6df' : '#dbe7ec', padding: '10px 16px', borderRadius: 6, minWidth: 220, cursor: canGoStep3 ? 'pointer' : 'not-allowed' }}
+            >
+              Go to Step 3 →
+            </button>
           </div>
         </div>
 
-        {/* Right: side panel */}
-        <div style={{ borderLeft: '2px solid #ddd', paddingLeft: 12 }}>
+        {/* Right: side panel (sticky) */}
+        <div style={{ borderLeft: '2px solid #ddd', paddingLeft: 12, position: 'sticky', top: 0, alignSelf: 'start', maxHeight: '100%', overflow: 'auto' }}>
           {!activeTarget && <div style={{ color: '#666' }}>Choose a target on the left and click “Edit rules”.</div>}
           {activeTarget && (
             <div>
@@ -366,4 +437,3 @@ export default function BuilderStep2() {
     </main>
   );
 }
-
