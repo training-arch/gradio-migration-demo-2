@@ -66,17 +66,41 @@ def row_meets_value_filters(row: pd.Series, filters: Dict[str, list[str]], mode:
     mode = (mode or "AND").upper()
     return any(tests) if mode == "OR" else all(tests)
 
-def value_meets_text_phrases(value, phrases: list[str] | None, mode: str = "ANY") -> bool:
+def _match_phrases(value: Any, phrases: list[str] | None, *, mode: str = "ANY", case_sensitive: bool = False, whole_word: bool = False) -> bool:
+    """Return True if value matches phrases according to mode/case/word settings.
+    - When phrases empty/blank -> True (no constraint)
+    - mode: ANY/ALL
+    - case_sensitive: compare with original case when True; lowercase otherwise
+    - whole_word: use word-boundary regex around the entire phrase
+    """
     if not phrases:
         return True
     s = "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value)
-    s_low = s.lower()
-    checks = [(p or "").strip().lower() for p in (phrases or []) if (p or "").strip() != ""]
-    if not checks:
+    mode = (mode or "ANY").upper()
+    cleaned = [(p or "").strip() for p in (phrases or []) if (p or "").strip() != ""]
+    if not cleaned:
         return True
-    if (mode or "ANY").upper() == "ALL":
-        return all(c in s_low for c in checks)
-    return any(c in s_low for c in checks)
+
+    if whole_word:
+        # Build regex for each phrase with word boundaries at both ends
+        flags = 0 if case_sensitive else re.IGNORECASE
+        def hit_one(p: str) -> bool:
+            pattern = r"\b" + re.escape(p) + r"\b"
+            return re.search(pattern, s, flags=flags) is not None
+    else:
+        if case_sensitive:
+            def hit_one(p: str) -> bool:
+                return p in s
+        else:
+            s_low = s.lower()
+            def hit_one(p: str) -> bool:
+                return p.lower() in s_low
+
+    hits = [hit_one(p) for p in cleaned]
+    return all(hits) if mode == "ALL" else any(hits)
+
+def value_meets_text_phrases(value, phrases: list[str] | None, mode: str = "ANY", *, case_sensitive: bool = False, whole_word: bool = False) -> bool:
+    return _match_phrases(value, phrases, mode=mode, case_sensitive=case_sensitive, whole_word=whole_word)
 
 def row_meets_text_filters(row: pd.Series, text_filters: dict, across_mode: str = "AND") -> bool:
     """
@@ -98,7 +122,9 @@ def row_meets_text_filters(row: pd.Series, text_filters: dict, across_mode: str 
         val = row[col] if col in row else None
         col_mode = str(cfg.get("mode", "ANY")).upper()
         include = bool(cfg.get("include", True))
-        hit = value_meets_text_phrases(val, cfg.get("phrases") or [], mode=col_mode)
+        case_sensitive = bool(cfg.get("case_sensitive", False))
+        whole_word = bool(cfg.get("whole_word", False))
+        hit = value_meets_text_phrases(val, cfg.get("phrases") or [], mode=col_mode, case_sensitive=case_sensitive, whole_word=whole_word)
         tests.append(hit if include else (not hit))
     if not tests:
         return True
@@ -114,14 +140,11 @@ def keyword_flag_messages(value, cfg_kw: dict | None) -> str:
         return "[]"
     phrases = cfg_kw.get("phrases") or []
     mode = str(cfg_kw.get("mode", "ANY")).upper()
+    case_sensitive = bool(cfg_kw.get("case_sensitive", False))
+    whole_word = bool(cfg_kw.get("whole_word", False))
     if not phrases:
         return "[]"
-    val = "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value)
-    s_low = val.lower()
-    norm = [p.strip().lower() for p in phrases if p and p.strip()]
-    if not norm:
-        return "[]"
-    hit = (all(p in s_low for p in norm) if mode == "ALL" else any(p in s_low for p in norm))
+    hit = _match_phrases(value, phrases, mode=mode, case_sensitive=case_sensitive, whole_word=whole_word)
     return f"Keyword flag: {', '.join(phrases)}" if hit else "[]"
 
 # -----------------------------

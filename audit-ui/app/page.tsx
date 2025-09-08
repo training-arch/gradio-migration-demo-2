@@ -65,6 +65,7 @@ export default function Home() {
     sample_rows: any[];
   }>(null);
   const [previewBusy, setPreviewBusy] = useState<boolean>(false);
+  const [previewLimit, setPreviewLimit] = useState<number>(10);
   // Phase 2 builder state
   const [activeTarget, setActiveTarget] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState<Record<string, boolean>>({
@@ -75,6 +76,7 @@ export default function Home() {
     tf: false,
   });
   const [valuesCache, setValuesCache] = useState<Record<string, string[]>>({});
+  const [valuesLoading, setValuesLoading] = useState<Record<string, boolean>>({});
   const [vfExpander, setVfExpander] = useState<Record<string, boolean>>({});
   const [tfExpander, setTfExpander] = useState<Record<string, boolean>>({});
   const statusLabel = status?.status || null;
@@ -181,6 +183,13 @@ export default function Home() {
     if ((targets || []).length > 0) setActiveTarget(targets[0]);
   };
 
+  // When active target changes, try to prefetch distinct values for mini-preview
+  useEffect(() => {
+    if (activeTarget && uploadId && !valuesCache[activeTarget] && !valuesLoading[activeTarget]) {
+      fetchValuesForColumn(activeTarget);
+    }
+  }, [activeTarget, uploadId]);
+
   const handlePreview = async () => {
     try {
       if (!uploadId) return;
@@ -198,7 +207,7 @@ export default function Home() {
         throw new Error("targets_config must be a JSON object");
       }
 
-      const params = { targets_config: JSON.stringify(parsed), limit: 10 } as any;
+      const params = { targets_config: JSON.stringify(parsed), limit: previewLimit } as any;
       const res = await axios.get(`${API}/uploads/${uploadId}/preview`, { params });
       setPreview(res.data);
     } catch (e: any) {
@@ -274,11 +283,15 @@ export default function Home() {
   const fetchValuesForColumn = async (col: string) => {
     if (!uploadId || !col) return;
     try {
+      setValuesLoading((p) => ({ ...p, [col]: true }));
       const res = await axios.get(`${API}/uploads/${uploadId}/values`, { params: { column: col, limit: 200 } });
       const vals: string[] = res.data?.values || [];
       setValuesCache((prev) => ({ ...prev, [col]: vals }));
-    } catch (e) {
-      // leave cache empty; error shown globally on other actions if needed
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || `Failed to load values for ${col}`);
+    }
+    finally {
+      setValuesLoading((p) => ({ ...p, [col]: false }));
     }
   };
 
@@ -457,6 +470,21 @@ export default function Home() {
                 }} disabled={!!configError || configEmpty}>
                   Save config
                 </button>
+                <button onClick={async () => {
+                  try {
+                    if (!presetName.trim()) throw new Error('Choose a config to delete');
+                    await axios.delete(`${API}/configs/${encodeURIComponent(presetName.trim())}`);
+                    const rl = await axios.get(`${API}/configs`);
+                    setPresets(rl.data?.items || []);
+                    // move to builder, keep current JSON for editing
+                    setMode('builder');
+                    setPresetName("");
+                  } catch (e: any) {
+                    setError(e?.response?.data?.detail || e?.message || 'Delete failed');
+                  }
+                }} disabled={!presetName}>
+                  Delete config
+                </button>
               </div>
               <div style={{ marginTop: 6 }}>
                 <input placeholder="Config name" value={presetName} onChange={(e) => setPresetName((e.target as HTMLInputElement).value)} style={{ width: '100%', marginBottom: 6 }} />
@@ -492,7 +520,22 @@ export default function Home() {
                         <div key={t} style={{ borderBottom: '1px solid #f5f5f5', padding: 8, background: activeTarget === t ? '#eef6ff' : '#fff', cursor: 'pointer' }} onClick={() => setActiveTarget(t)}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ fontWeight: 600 }}>{t}</div>
-                            <button onClick={(e) => { e.stopPropagation(); setActiveTarget(t); }} style={{ fontSize: 12 }}>Edit rules</button>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button onClick={(e) => { e.stopPropagation(); setActiveTarget(t); }} style={{ fontSize: 12 }}>Edit rules</button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateConfig((c) => { delete c[t]; });
+                                  if (activeTarget === t) {
+                                    const rest = keys.filter((k) => k !== t);
+                                    setActiveTarget(rest[0] || null);
+                                  }
+                                }}
+                                style={{ fontSize: 12, color: '#8a1f1f' }}
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </div>
                           <div style={{ color: '#555', fontSize: 12, marginTop: 4 }}>{targetBadge(cfg, t)}</div>
                         </div>
@@ -502,16 +545,45 @@ export default function Home() {
                 })()}
               </div>
               {/* Simple mini preview of active target values (from last preview) */}
-              {preview && activeTarget && (
+              {activeTarget && (
                 <div style={{ marginTop: 8 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Column preview: {activeTarget}</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Values: {activeTarget}</div>
                   <div style={{ border: '1px solid #eee', borderRadius: 8, padding: 6, maxHeight: 160, overflow: 'auto', background: '#fafafa' }}>
-                    {preview.sample_rows.slice(0, 8).map((r, i) => (
-                      <div key={i} style={{ fontSize: 12, borderBottom: '1px dashed #eee', padding: '2px 0' }}>{String(r[activeTarget] ?? '')}</div>
+                    {valuesLoading[activeTarget] ? (
+                      <div style={{ fontSize: 12, color: '#555' }}>Loading…</div>
+                    ) : (valuesCache[activeTarget]?.length ? (
+                      valuesCache[activeTarget].slice(0, 50).map((v, i) => (
+                        <div key={i} style={{ fontSize: 12, borderBottom: '1px dashed #eee', padding: '2px 0' }}>{String(v)}</div>
+                      ))
+                    ) : (
+                      <button onClick={() => fetchValuesForColumn(activeTarget)} disabled={!uploadId}>Load values</button>
                     ))}
                   </div>
                 </div>
               )}
+              {/* Add target */}
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Add target</label>
+                {(() => {
+                  const res = parseConfigSafe();
+                  const cfg = res.ok ? res.data : {};
+                  const existing = new Set(Object.keys(cfg || {}));
+                  const options = (columns || []).filter((c) => !existing.has(c));
+                  if (options.length === 0) return <div style={{ fontSize: 12, color: '#666' }}>All columns already added</div>;
+                  return (
+                    <select defaultValue="" onChange={(e) => {
+                      const col = (e.target as HTMLSelectElement).value;
+                      if (!col) return;
+                      updateConfig((c) => { ensureTargetDefaults(c, col); });
+                      setActiveTarget(col);
+                      (e.target as HTMLSelectElement).value = '';
+                    }} style={{ width: '100%' }}>
+                      <option value="">-- choose column --</option>
+                      {options.map((c) => (<option key={c} value={c}>{c}</option>))}
+                    </select>
+                  );
+                })()}
+              </div>
             </div>
             {/* Right: side panel for active target */}
             <div style={{ flex: 1 }}>
@@ -537,7 +609,7 @@ export default function Home() {
                       {panelOpen.ai && (
                         <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={!!tcfg.ai} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].ai = (e.target as HTMLInputElement).checked; })} />
+                            <input type="checkbox" checked={!!tcfg.ai} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setPanelOpen((p)=>({...p, ai:true})); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].ai = on; }); }} />
                             Enable AI rule
                           </label>
                           <div style={{ marginTop: 6 }}>
@@ -562,7 +634,7 @@ export default function Home() {
                       {panelOpen.wc && (
                         <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={!!tcfg.wc} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].wc = (e.target as HTMLInputElement).checked; })} />
+                            <input type="checkbox" checked={!!tcfg.wc} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setPanelOpen((p)=>({...p, wc:true})); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].wc = on; }); }} />
                             Enable word count
                           </label>
                           <div style={{ marginTop: 6 }}>
@@ -582,7 +654,7 @@ export default function Home() {
                       {panelOpen.kw && (
                         <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={!!tcfg.kw_flag?.enabled} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.enabled = (e.target as HTMLInputElement).checked; })} />
+                            <input type="checkbox" checked={!!tcfg.kw_flag?.enabled} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setPanelOpen((p)=>({...p, kw:true})); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.enabled = on; }); }} />
                             Enable keyword flag
                           </label>
                           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
@@ -591,6 +663,16 @@ export default function Home() {
                               <option value="ANY">ANY</option>
                               <option value="ALL">ALL</option>
                             </select>
+                          </div>
+                          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 6 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input type="checkbox" checked={!!tcfg.kw_flag?.case_sensitive} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.case_sensitive = (e.target as HTMLInputElement).checked; })} />
+                              Match case
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input type="checkbox" checked={!!tcfg.kw_flag?.whole_word} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].kw_flag.whole_word = (e.target as HTMLInputElement).checked; })} />
+                              Match whole word
+                            </label>
                           </div>
                           <div style={{ marginTop: 8 }}>
                             <KeywordEditor
@@ -612,7 +694,7 @@ export default function Home() {
                       {panelOpen.vf && (
                         <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={!!tcfg.vf_on} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].vf_on = (e.target as HTMLInputElement).checked; })} />
+                            <input type="checkbox" checked={!!tcfg.vf_on} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setPanelOpen((p)=>({...p, vf:true})); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].vf_on = on; }); }} />
                             Enable value filters
                           </label>
                           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
@@ -687,7 +769,7 @@ export default function Home() {
                       {panelOpen.tf && (
                         <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <input type="checkbox" checked={!!tcfg.tf_on} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].tf_on = (e.target as HTMLInputElement).checked; })} />
+                            <input type="checkbox" checked={!!tcfg.tf_on} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; setPanelOpen((p)=>({...p, tf:true})); updateConfig((c) => { ensureTargetDefaults(c, activeTarget); c[activeTarget].tf_on = on; }); }} />
                             Enable text filters
                           </label>
                           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
@@ -736,6 +818,14 @@ export default function Home() {
                                           <option value="ANY">ANY</option>
                                           <option value="ALL">ALL</option>
                                         </select>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                          <input type="checkbox" checked={!!row.case_sensitive} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.case_sensitive = (e.target as HTMLInputElement).checked; tf[col] = r; c[activeTarget].text_filters = tf; })} />
+                                          Match case
+                                        </label>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                          <input type="checkbox" checked={!!row.whole_word} onChange={(e) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.whole_word = (e.target as HTMLInputElement).checked; tf[col] = r; c[activeTarget].text_filters = tf; })} />
+                                          Match whole word
+                                        </label>
                                       </div>
                                       <div style={{ marginTop: 8 }}>
                                         <KeywordEditor
@@ -743,6 +833,9 @@ export default function Home() {
                                           onAdd={(p) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; if (p.trim() && !r.phrases.includes(p.trim())) r.phrases.push(p.trim()); tf[col] = r; c[activeTarget].text_filters = tf; })}
                                           onRemove={(p) => updateConfig((c) => { ensureTargetDefaults(c, activeTarget); const tf = c[activeTarget].text_filters || {}; const r = tf[col] || { mode: 'ANY', phrases: [], include: true }; r.phrases = (r.phrases || []).filter((x: string) => x !== p); tf[col] = r; c[activeTarget].text_filters = tf; })}
                                         />
+                                        {(!phrases || phrases.length === 0) && (
+                                          <div style={{ color: '#8a1f1f', fontSize: 12, marginTop: 6 }}>Add phrases for this column or remove the column from text filters.</div>
+                                        )}
                                       </div>
                                     </div>
                                   )}
@@ -800,8 +893,16 @@ export default function Home() {
         />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
           <button onClick={handlePreview} disabled={!uploadId || previewBusy || !!configError || configEmpty}>
-            {previewBusy ? "Previewing..." : "Preview (top 10)"}
+            {previewBusy ? "Previewing..." : `Preview (top ${previewLimit})`}
           </button>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ color: '#555' }}>Size</span>
+            <select value={String(previewLimit)} onChange={(e) => setPreviewLimit(Math.max(1, Number((e.target as HTMLSelectElement).value) || 10))}>
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+            </select>
+          </label>
           {preview && (
             <span>
               Kept {preview.rows_kept} of {preview.rows_total} rows

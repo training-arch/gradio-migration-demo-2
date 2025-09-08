@@ -15,7 +15,7 @@ Example
     "prompt": "",
     "wc": true,
     "wc_min": 3,
-    "kw_flag": { "enabled": true, "mode": "ANY", "phrases": ["urgent", "help"] },
+    "kw_flag": { "enabled": true, "mode": "ANY", "phrases": ["urgent", "help"], "case_sensitive": false, "whole_word": false },
     "vf_on": false,
     "filters": {},
     "filter_mode": "AND",
@@ -35,16 +35,19 @@ Schema (per target)
   - enabled: boolean.
   - mode: "ANY" | "ALL". Matching mode across phrases.
   - phrases: string[]. Exact substring matches (case-insensitive).
+  - case_sensitive (optional): boolean. Default false (case-insensitive).
+  - whole_word (optional): boolean. Default false (substring). When true, matches full words/phrases using word boundaries.
 - vf_on: boolean. Enables value filters on arbitrary columns.
 - filters: object `{ columnName: string[] }`. Allowed values per column. Within a column, values are OR'ed; across columns, combined by `filter_mode`.
 - filter_mode: "AND" | "OR". Combination across columns for value/text filters.
 - tf_on: boolean. Enables text filters on arbitrary columns.
-- text_filters: object `{ columnName: { mode: "ANY"|"ALL", phrases: string[], include: boolean } }`.
+- text_filters: object `{ columnName: { mode: "ANY"|"ALL", phrases: string[], include: boolean, case_sensitive?: boolean, whole_word?: boolean } }`.
 
 Notes
 
 - Unknown fields are ignored by the engine.
 - Missing fields default as in `backend_app/engine.ensure_target_defaults`.
+- New optional booleans `case_sensitive` and `whole_word` default to `false` to preserve behavior.
 
 ## Engine outputs
 
