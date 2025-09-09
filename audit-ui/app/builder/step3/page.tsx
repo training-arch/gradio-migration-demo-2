@@ -105,6 +105,11 @@ export default function BuilderStep3() {
       });
       const jobId: string | undefined = res.data?.job_id;
       if (!jobId) throw new Error("Job creation failed");
+      try {
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("builder.runFrom", "step3");
+        }
+      } catch {}
       router.push(`/jobs/${jobId}`);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to start job");

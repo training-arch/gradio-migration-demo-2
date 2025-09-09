@@ -25,6 +25,7 @@ export default function JobStatusPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [builderUploadId, setBuilderUploadId] = useState<string | null>(null);
   const [hasBuilderConfig, setHasBuilderConfig] = useState<boolean>(false);
+  const [runFrom, setRunFrom] = useState<string | null>(null);
 
   const downloadUrl = useMemo(() => `${API}/jobs/${jobId}/download`, [API, jobId]);
 
@@ -58,8 +59,10 @@ export default function JobStatusPage() {
       if (typeof window !== "undefined") {
         const id = sessionStorage.getItem("builder.uploadId");
         const cfg = sessionStorage.getItem("builder.targetsConfig");
+        const rf = sessionStorage.getItem("builder.runFrom");
         setBuilderUploadId(id);
         setHasBuilderConfig(Boolean(cfg && cfg.length > 2));
+        setRunFrom(rf);
       }
     } catch {}
     return () => {
@@ -114,17 +117,18 @@ export default function JobStatusPage() {
               <Link href="/start" style={{ padding: "8px 12px", background: "#f0f4f6", borderRadius: 6 }}>
                 Go back home
               </Link>
-              <button
-                onClick={() => {
-                  const id = builderUploadId;
-                  if (id) router.push(`/builder/step3?uploadId=${encodeURIComponent(id)}`);
-                  else router.push(`/builder/step3`);
-                }}
-                disabled={!hasBuilderConfig}
-                style={{ padding: "8px 12px", background: hasBuilderConfig ? "#f0f4f6" : "#dbe7ec", borderRadius: 6 }}
-              >
-                Edit/Save config
-              </button>
+              {runFrom === "step3" && hasBuilderConfig && (
+                <button
+                  onClick={() => {
+                    const id = builderUploadId;
+                    if (id) router.push(`/builder/step3?uploadId=${encodeURIComponent(id)}`);
+                    else router.push(`/builder/step3`);
+                  }}
+                  style={{ padding: "8px 12px", background: "#f0f4f6", borderRadius: 6 }}
+                >
+                  Edit/Save config
+                </button>
+              )}
             </div>
           </div>
         )}

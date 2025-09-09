@@ -71,6 +71,14 @@ export default function StartPage() {
       });
       const jobId = jobRes.data?.job_id as string | undefined;
       if (!jobId) throw new Error("Job creation failed");
+      try {
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("builder.runFrom", "preset");
+          sessionStorage.setItem("builder.configName", presetName);
+          // Do not leak any old builder config into Jobs context
+          sessionStorage.removeItem("builder.targetsConfig");
+        }
+      } catch {}
       router.push(`/jobs/${jobId}`);
     } catch (e: any) {
       setError(
