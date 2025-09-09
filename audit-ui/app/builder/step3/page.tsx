@@ -30,6 +30,7 @@ export default function BuilderStep3() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [isEditingPreset, setIsEditingPreset] = useState(false);
 
   useEffect(() => {
     const fromQuery = sp.get("uploadId");
@@ -49,6 +50,18 @@ export default function BuilderStep3() {
     } catch {
       setCfg({});
     }
+    // Prefill metadata if coming from Edit flow
+    try {
+      if (typeof window !== "undefined") {
+        const nm = sessionStorage.getItem("builder.configName") || "";
+        const dc = sessionStorage.getItem("builder.configDesc") || "";
+        if (nm) {
+          setName(nm);
+          setIsEditingPreset(true);
+        }
+        if (dc) setDesc(dc);
+      }
+    } catch {}
   }, [sp]);
 
   const targets = useMemo(() => Object.keys(cfg || {}), [cfg]);
@@ -117,7 +130,7 @@ export default function BuilderStep3() {
           <input placeholder="Config name" value={name} onChange={(e) => setName((e.target as HTMLInputElement).value)} style={{ flex: 1, minWidth: 220 }} />
           <input placeholder="Description (optional)" value={desc} onChange={(e) => setDesc((e.target as HTMLInputElement).value)} style={{ flex: 2, minWidth: 320 }} />
           <button onClick={saveConfig} disabled={!canSave || saving} style={{ background: !canSave || saving ? "#dbe7ec" : "#b9d6df", padding: "6px 12px", borderRadius: 6 }}>
-            {saving ? "Saving…" : "Save config"}
+            {saving ? "Saving…" : (isEditingPreset ? "Update config" : "Save config")}
           </button>
           <button onClick={runJob} disabled={!canRun || running} style={{ background: !canRun || running ? "#dbe7ec" : "#b9d6df", padding: "6px 12px", borderRadius: 6 }}>
             {running ? "Starting…" : "Run job"}

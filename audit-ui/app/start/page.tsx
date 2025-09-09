@@ -159,7 +159,7 @@ export default function StartPage() {
         >
           <label style={{ fontWeight: 600 }}>Choose config</label>
           <Link
-            href="/builder"
+            href="/builder?new=1"
             style={{ background: "#b9d6df", padding: "4px 8px", borderRadius: 6 }}
           >
             + Create new

@@ -117,15 +117,27 @@ export default function BuilderStep2() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewLimit, setPreviewLimit] = useState(5);
   const [error, setError] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const leftScrollRef = useRef<HTMLDivElement | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
-  // Inbound state: uploadId, targets from sessionStorage
+  // Inbound state: uploadId, targets, and any preloaded config from sessionStorage
   useEffect(() => {
     const uid = sp.get('uploadId') || (typeof window !== 'undefined' ? sessionStorage.getItem('builder.uploadId') : null);
     const t = (typeof window !== 'undefined' ? sessionStorage.getItem('builder.selectedTargets') : null);
     setUploadId(uid);
     try { setTargets(t ? JSON.parse(t) : []); } catch { setTargets([]); }
+    try {
+      const raw = typeof window !== 'undefined' ? sessionStorage.getItem('builder.targetsConfig') : null;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') setCfg(parsed);
+      }
+      const nm = typeof window !== 'undefined' ? sessionStorage.getItem('builder.configName') : null;
+      if (nm) setEditingName(nm);
+    } catch {}
+    setHydrated(true);
   }, [sp]);
 
   // Initialize defaults when targets change
@@ -189,10 +201,11 @@ export default function BuilderStep2() {
     setCfg((prev) => { const next = { ...prev }; updater(next); return next; });
   };
 
-  // Persist config for Step 3
+  // Persist config for Step 3 (skip initial mount to avoid overwriting edited config)
   useEffect(() => {
+    if (!hydrated) return;
     try { sessionStorage.setItem('builder.targetsConfig', JSON.stringify(cfg || {})); } catch {}
-  }, [cfg]);
+  }, [cfg, hydrated]);
 
   const canGoStep3 = useMemo(() => {
     return Boolean(uploadId && targets && targets.length > 0 && Object.keys(cfg || {}).length > 0);
@@ -201,6 +214,11 @@ export default function BuilderStep2() {
   return (
     <main style={{ padding: '2rem', fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif', maxWidth: 1100, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Edit rules</h1>
+      {editingName && (
+        <div style={{ background: '#eef6ff', border: '1px solid #cfe3ea', padding: '0.5rem 0.75rem', borderRadius: 8, margin: '6px 0 10px', color: '#0b4e75' }}>
+          Editing preset: <strong>{editingName}</strong>
+        </div>
+      )}
       <Stepper active={2} />
 
       {(!uploadId || targets.length === 0) && (

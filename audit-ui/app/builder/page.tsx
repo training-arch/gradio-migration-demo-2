@@ -41,6 +41,19 @@ export default function BuilderStep1() {
   // pick uploadId from query if present (so Start can pass it)
   const initialUploadId = useMemo(() => sp.get('uploadId'), [sp]);
 
+  // If explicitly starting a brand-new config, clear any previous edit/session state
+  useEffect(() => {
+    const isNew = sp.get('new');
+    if (isNew && typeof window !== 'undefined') {
+      try {
+        sessionStorage.removeItem('builder.targetsConfig');
+        sessionStorage.removeItem('builder.configName');
+        sessionStorage.removeItem('builder.configDesc');
+        // selectedTargets stays user-driven here; it will be set below as the user selects
+      } catch {}
+    }
+  }, [sp]);
+
   useEffect(() => {
     if (initialUploadId && !uploadId) {
       setUploadId(initialUploadId);
