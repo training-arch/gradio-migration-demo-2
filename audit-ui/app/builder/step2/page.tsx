@@ -320,7 +320,32 @@ export default function BuilderStep2() {
                     <input type="checkbox" checked={!!cfg[activeTarget]?.ai} onChange={(e) => updateCfg((c) => { c[activeTarget].ai = (e.target as HTMLInputElement).checked; })} /> Enable
                   </label>
                   {panelOpen.ai && (
-                    <textarea rows={4} placeholder="Prompt template" value={cfg[activeTarget]?.prompt || ''} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].prompt = (e.target as HTMLTextAreaElement).value; })} style={{ width: '100%', marginTop: 6 }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+                      <textarea rows={4} placeholder="Prompt template (required when AI is enabled)" value={cfg[activeTarget]?.prompt || ''} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].prompt = (e.target as HTMLTextAreaElement).value; })} style={{ width: '100%' }} />
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <label>Source column</label>
+                        <select value={cfg[activeTarget]?.ai_source_column || activeTarget} onChange={(e)=>updateCfg((c)=>{ const v = (e.target as HTMLSelectElement).value; c[activeTarget].ai_source_column = v === activeTarget ? undefined : v; })}>
+                          {[activeTarget, ...columns.filter((c)=>c!==activeTarget)].map((cname) => (
+                            <option key={cname} value={cname}>{cname}</option>
+                          ))}
+                        </select>
+                        <span style={{ fontSize: 12, color: '#666' }}>(defaults to this target column)</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <label>Model</label>
+                        <input style={{ width: 180 }} placeholder="gpt-4o-mini" value={cfg[activeTarget]?.ai_model || ''} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].ai_model = (e.target as HTMLInputElement).value; })} />
+                        <label>Max tokens</label>
+                        <input type="number" min={16} max={512} style={{ width: 90 }} value={Number(cfg[activeTarget]?.ai_max_tokens ?? 80)} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].ai_max_tokens = Math.max(1, Math.min(1024, Number((e.target as HTMLInputElement).value) || 80)); })} />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="checkbox" checked={cfg[activeTarget]?.ai_cache !== false} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].ai_cache = (e.target as HTMLInputElement).checked; })} /> Use cache
+                        </label>
+                      </div>
+                      {cfg[activeTarget]?.ai && !(cfg[activeTarget]?.prompt || '').trim() && (
+                        <div style={{ fontSize: 12, color: '#8a5a00', background: '#fff6e6', border: '1px solid #ffd591', padding: '6px 8px', borderRadius: 6 }}>
+                          Provide a prompt to run AI. Default prompt is not auto-used.
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

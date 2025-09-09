@@ -9,8 +9,14 @@ Usage example:
 """
 from __future__ import annotations
 import re
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, List
 import pandas as pd
+import os
+
+from .ai_runner import run_batch, parse_ai  # type: ignore
+import logging
+
+log = logging.getLogger("engine.ai")
 
 # -----------------------------
 # Helper utilities
@@ -154,6 +160,19 @@ def ensure_target_defaults(cfg_t: dict | None) -> dict:
     cfg_t = dict(cfg_t or {})
     cfg_t.setdefault("ai", False)  # offline stub
     cfg_t.setdefault("prompt", "")
+    # AI tuning (optional; ignored when ai=false or prompt empty)
+    cfg_t.setdefault("ai_model", os.getenv("AI_MODEL", "gpt-4o-mini"))
+    try:
+        cfg_t.setdefault("ai_max_tokens", int(os.getenv("AI_MAX_TOKENS", "80")))
+    except Exception:
+        cfg_t.setdefault("ai_max_tokens", 80)
+    try:
+        cfg_t.setdefault("ai_temperature", float(os.getenv("AI_TEMPERATURE", "0")))
+    except Exception:
+        cfg_t.setdefault("ai_temperature", 0.0)
+    from_env_cache = os.getenv("AI_CACHE", "true").strip().lower() in ("1","true","yes","on")
+    cfg_t.setdefault("ai_cache", from_env_cache)
+    cfg_t.setdefault("ai_source_column", None)
     cfg_t.setdefault("wc", False)
     cfg_t.setdefault("wc_min", 7)
     cfg_t.setdefault("kw_flag", {"enabled": False, "mode": "ANY", "phrases": []})
@@ -195,13 +214,21 @@ def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str |
         if wc_enabled and not (1 <= wc_min <= 20):
             raise ValueError(f"'{target_col}' word-count minimum must be between 1 and 20.")
 
-        results = []
+        results: List[str] = []
+        # We may need to do AI calls; precollect prompts and map back to row indices
+        ai_enabled = bool(cfg.get("ai")) and bool(str(cfg.get("prompt", "")).strip())
+        ai_source_col = (cfg.get("ai_source_column") or None)
+        if ai_source_col and ai_source_col not in df.columns:
+            ai_source_col = None  # invalid -> fallback to target
+
+        # Build masks to skip cost when earlier filters already excluded rows
+        prefilter_keep: List[bool] = []
         for _, row in df.iterrows():
             # Pre-filters: only apply if toggles ON
             if vf_on and not row_meets_value_filters(row, filters, mode=filter_mode):
-                results.append("[]"); continue
+                prefilter_keep.append(False); results.append("[]"); continue
             if tf_on and not row_meets_text_filters(row, text_filters, across_mode=filter_mode):
-                results.append("[]"); continue
+                prefilter_keep.append(False); results.append("[]"); continue
 
             val = row[target_col]
             messages = []
@@ -221,12 +248,65 @@ def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str |
             if kw_msg != "[]":
                 messages.append(kw_msg)
 
-            # AI rule (stubbed offline; parity placeholder)
-            if bool(cfg.get("ai")) and str(cfg.get("prompt","")):
-                # In production, call LLM and parse response.
-                pass
-
+            # Placeholder for AI; we fill later if needed
             results.append(" ; ".join(messages) if messages else "[]")
+            prefilter_keep.append(True)
+
+        # Second pass: AI evaluation on rows that survived filters
+        if ai_enabled:
+            prompts: List[str] = []
+            row_indices: List[int] = []
+            user_prompt = str(cfg.get("prompt", ""))
+            log.info(
+                "AI enabled for target=%s source_col=%s prompt_len=%d rows=%d",
+                target_col,
+                ai_source_col or target_col,
+                len(user_prompt),
+                len(df),
+            )
+            for idx, row in df.iterrows():
+                if not prefilter_keep[idx]:
+                    continue
+                source_val = row[ai_source_col] if ai_source_col else row[target_col]
+                # Skip rows with no text
+                if pd.isna(source_val) or str(source_val).strip() == "":
+                    continue
+                rendered = render_prompt_allcols(user_prompt, row, target_col, source_val)
+                prompts.append(rendered)
+                row_indices.append(idx)
+
+            if prompts:
+                model = str(cfg.get("ai_model") or os.getenv("AI_MODEL", "gpt-4o-mini"))
+                max_tokens = int(cfg.get("ai_max_tokens") or os.getenv("AI_MAX_TOKENS", "80"))
+                temperature = float(cfg.get("ai_temperature") or os.getenv("AI_TEMPERATURE", "0"))
+                use_cache = bool(cfg.get("ai_cache", True))
+                log.info("AI batch start: target=%s prompts=%d model=%s cache=%s", target_col, len(prompts), model, use_cache)
+
+                # Run in simple batches to respect rate limits minimally
+                BATCH = 20
+                for i in range(0, len(prompts), BATCH):
+                    batch_prompts = prompts[i:i+BATCH]
+                    batch_rows = row_indices[i:i+BATCH]
+                    outs = run_batch(batch_prompts, model=model, max_tokens=max_tokens, temperature=temperature, use_cache=use_cache)
+                    triggered = 0
+                    for (ri, out_obj) in zip(batch_rows, outs):
+                        content = str(out_obj.get("content") or "{}")
+                        norm = parse_ai(content)
+                        if norm.get("trigger"):
+                            msg = str(norm.get("message") or "AI rule triggered").strip()
+                            conf = norm.get("confidence")
+                            if isinstance(conf, (int, float)):
+                                tag = f"confidence={float(conf):.2f} - AI: {msg}" if msg else f"confidence={float(conf):.2f} - AI"
+                            else:
+                                tag = f"AI: {msg}" if msg else "AI"
+                            # Append to existing messages
+                            prev = results[ri]
+                            if prev == "[]" or not prev:
+                                results[ri] = tag
+                            else:
+                                results[ri] = f"{prev} ; {tag}"
+                            triggered += 1
+                    log.info("AI batch done: target=%s batch=%d..%d triggered=%d", target_col, i, i+len(batch_prompts)-1, triggered)
 
         out[f"{target_col} Mistakes"] = results
 

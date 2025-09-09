@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import logging
 import uuid
 import json
 import shutil
@@ -30,6 +31,16 @@ except Exception:
     DBJob = None  # type: ignore
 
 SessionFactory = get_session_factory()
+
+# --- logging configuration (surface AI + engine logs) ---
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+try:
+    logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+except Exception:
+    logging.basicConfig(level=logging.INFO)
+# Make sure our AI-related loggers surface at INFO by default
+logging.getLogger("engine.ai").setLevel(logging.INFO)
+logging.getLogger("ai_runner").setLevel(logging.INFO)
 
 # --- simple local storage dirs ---
 BASE_DIR = Path(__file__).resolve().parent.parent

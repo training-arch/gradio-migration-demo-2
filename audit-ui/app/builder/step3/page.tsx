@@ -82,40 +82,29 @@ export default function BuilderStep3() {
   const saveConfig = async () => {
     if (!canSave) return;
     try {
-      setSaving(true);
-      setError(null);
-      setOkMsg(null);
+      setSaving(true); setError(null); setOkMsg(null);
       await axios.post(`${API}/configs`, { name: name.trim(), description: desc || "", targets_config: cfg });
       setOkMsg("Config saved");
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Save failed");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   const runJob = async () => {
     if (!canRun || !uploadId) return;
     try {
-      setRunning(true);
-      setError(null);
+      setRunning(true); setError(null);
       const res = await axios.post(`${API}/jobs`, {
         upload_id: uploadId,
         targets_config: cfg,
       });
       const jobId: string | undefined = res.data?.job_id;
       if (!jobId) throw new Error("Job creation failed");
-      try {
-        if (typeof window !== "undefined") {
-          sessionStorage.setItem("builder.runFrom", "step3");
-        }
-      } catch {}
+      try { if (typeof window !== "undefined") { sessionStorage.setItem("builder.runFrom", "step3"); } } catch {}
       router.push(`/jobs/${jobId}`);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Failed to start job");
-    } finally {
-      setRunning(false);
-    }
+    } finally { setRunning(false); }
   };
 
   return (
@@ -123,21 +112,17 @@ export default function BuilderStep3() {
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Summary</h1>
       <Stepper active={3} />
 
-      {error && (
-        <div style={{ background: "#ffe9e9", border: "1px solid #f5b5b5", padding: "0.75rem 1rem", borderRadius: 8, marginBottom: 12, color: "#8a1f1f" }}>{error}</div>
-      )}
-      {okMsg && (
-        <div style={{ background: "#e6f6ea", border: "1px solid #b5e5c1", padding: "0.75rem 1rem", borderRadius: 8, marginBottom: 12, color: "#05620e" }}>{okMsg}</div>
-      )}
+      {error && (<div style={{ background: "#ffe9e9", border: "1px solid #f5b5b5", padding: "0.75rem 1rem", borderRadius: 8, marginBottom: 12, color: "#8a1f1f" }}>{error}</div>)}
+      {okMsg && (<div style={{ background: "#e6f6ea", border: "1px solid #b5e5c1", padding: "0.75rem 1rem", borderRadius: 8, marginBottom: 12, color: "#05620e" }}>{okMsg}</div>)}
 
       <section style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input placeholder="Config name" value={name} onChange={(e) => setName((e.target as HTMLInputElement).value)} style={{ flex: 1, minWidth: 220 }} />
-          <input placeholder="Description (optional)" value={desc} onChange={(e) => setDesc((e.target as HTMLInputElement).value)} style={{ flex: 2, minWidth: 320 }} />
-          <button onClick={saveConfig} disabled={!canSave || saving} style={{ background: !canSave || saving ? "#dbe7ec" : "#b9d6df", padding: "6px 12px", borderRadius: 6 }}>
+          <input placeholder="Config name" value={name} onChange={(e)=>setName((e.target as HTMLInputElement).value)} style={{ flex: 1, minWidth: 220 }} />
+          <input placeholder="Description (optional)" value={desc} onChange={(e)=>setDesc((e.target as HTMLInputElement).value)} style={{ flex: 2, minWidth: 320 }} />
+          <button onClick={saveConfig} disabled={!canSave || saving} style={{ background: (!canSave || saving) ? '#dbe7ec' : '#b9d6df', padding: '6px 12px', borderRadius: 6 }}>
             {saving ? "Saving…" : (isEditingPreset ? "Update config" : "Save config")}
           </button>
-          <button onClick={runJob} disabled={!canRun || running} style={{ background: !canRun || running ? "#dbe7ec" : "#b9d6df", padding: "6px 12px", borderRadius: 6 }}>
+          <button onClick={runJob} disabled={!canRun || running} style={{ background: (!canRun || running) ? '#dbe7ec' : '#b9d6df', padding: '6px 12px', borderRadius: 6 }}>
             {running ? "Starting…" : "Run job"}
           </button>
         </div>
@@ -157,18 +142,12 @@ export default function BuilderStep3() {
       </section>
 
       <div style={{ marginTop: 16, display: "flex", gap: 12 }}>
-        <button
-          onClick={() => {
-            if (uploadId) router.push(`/builder/step2?uploadId=${encodeURIComponent(uploadId)}`);
-            else router.push("/builder/step2");
-          }}
-        >
+        <button onClick={()=>{ if (uploadId) router.push(`/builder/step2?uploadId=${encodeURIComponent(uploadId)}`); else router.push('/builder/step2'); }}>
           ← Back to Step 2
         </button>
-        <Link href="/start" style={{ textDecoration: "underline" }}>
-          Back to Start
-        </Link>
+        <Link href="/start" style={{ textDecoration: 'underline' }}>Back to Start</Link>
       </div>
     </main>
   );
 }
+

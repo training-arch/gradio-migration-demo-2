@@ -23,6 +23,10 @@ uploads/
 results/
 *.xlsx
 
+# Environment files (keep local secrets out of Git)
+.env
+.env.*
+
 # Test/build caches
 .pytest_cache/
 .coverage
