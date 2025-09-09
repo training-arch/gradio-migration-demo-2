@@ -41,7 +41,13 @@ export default function StartPage() {
       const res = await axios.post(`${API}/uploads`, formData, {
         headers: { Accept: "application/json" },
       });
-      setUploadId(res.data?.upload_id || null);
+      const id = res.data?.upload_id || null;
+      setUploadId(id);
+      try {
+        if (id && typeof window !== "undefined") {
+          sessionStorage.setItem("builder.uploadId", id);
+        }
+      } catch {}
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Upload failed");
     } finally {
@@ -196,4 +202,3 @@ export default function StartPage() {
     </main>
   );
 }
-

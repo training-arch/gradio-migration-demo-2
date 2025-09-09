@@ -23,6 +23,8 @@ export default function JobStatusPage() {
   });
   const [polling, setPolling] = useState<boolean>(true);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [builderUploadId, setBuilderUploadId] = useState<string | null>(null);
+  const [hasBuilderConfig, setHasBuilderConfig] = useState<boolean>(false);
 
   const downloadUrl = useMemo(() => `${API}/jobs/${jobId}/download`, [API, jobId]);
 
@@ -51,6 +53,15 @@ export default function JobStatusPage() {
     if (polling) {
       timerRef.current = setInterval(poll, 1000);
     }
+    // read session data for navigation back to Step 3
+    try {
+      if (typeof window !== "undefined") {
+        const id = sessionStorage.getItem("builder.uploadId");
+        const cfg = sessionStorage.getItem("builder.targetsConfig");
+        setBuilderUploadId(id);
+        setHasBuilderConfig(Boolean(cfg && cfg.length > 2));
+      }
+    } catch {}
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -96,13 +107,24 @@ export default function JobStatusPage() {
         {state.status === "SUCCEEDED" && (
           <div style={{ marginTop: 14, padding: 12, border: "1px solid #cfe3ea", background: "#f3f9fb", borderRadius: 8 }}>
             <div style={{ fontWeight: 600, marginBottom: 8 }}>Your file is ready</div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <a href={downloadUrl} style={{ padding: "8px 12px", background: "#b9d6df", borderRadius: 6 }}>
                 Download result
               </a>
               <Link href="/start" style={{ padding: "8px 12px", background: "#f0f4f6", borderRadius: 6 }}>
                 Go back home
               </Link>
+              <button
+                onClick={() => {
+                  const id = builderUploadId;
+                  if (id) router.push(`/builder/step3?uploadId=${encodeURIComponent(id)}`);
+                  else router.push(`/builder/step3`);
+                }}
+                disabled={!hasBuilderConfig}
+                style={{ padding: "8px 12px", background: hasBuilderConfig ? "#f0f4f6" : "#dbe7ec", borderRadius: 6 }}
+              >
+                Edit/Save config
+              </button>
             </div>
           </div>
         )}
@@ -114,4 +136,3 @@ export default function JobStatusPage() {
     </main>
   );
 }
-

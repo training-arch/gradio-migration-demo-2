@@ -1,0 +1,43 @@
+{
+  "name": "jj",
+  "description": "jj",
+  "updated_at": "2025-09-09T04:55:06.866532+00:00",
+  "targets_config": {
+    "Topic": {
+      "ai": false,
+      "prompt": "",
+      "wc": true,
+      "wc_min": 7,
+      "kw_flag": {
+        "enabled": false,
+        "mode": "ANY",
+        "phrases": [],
+        "case_sensitive": false,
+        "whole_word": false
+      },
+      "vf_on": false,
+      "filters": {},
+      "filter_mode": "AND",
+      "tf_on": false,
+      "text_filters": {}
+    },
+    "Enquiry": {
+      "ai": false,
+      "prompt": "",
+      "wc": true,
+      "wc_min": 5,
+      "kw_flag": {
+        "enabled": false,
+        "mode": "ANY",
+        "phrases": [],
+        "case_sensitive": false,
+        "whole_word": false
+      },
+      "vf_on": false,
+      "filters": {},
+      "filter_mode": "AND",
+      "tf_on": false,
+      "text_filters": {}
+    }
+  }
+}
