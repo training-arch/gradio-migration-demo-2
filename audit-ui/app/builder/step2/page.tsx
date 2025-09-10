@@ -117,6 +117,19 @@ export default function BuilderStep2() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewLimit, setPreviewLimit] = useState(5);
   const [error, setError] = useState<string | null>(null);
+  // When AI is enabled for any target but its prompt is blank, disallow preview to enforce determinism
+  const aiPromptMissing = useMemo(() => {
+    try {
+      return Object.keys(cfg || {}).some((t) => cfg[t]?.ai && !(String(cfg[t]?.prompt || '').trim()));
+    } catch { return false; }
+  }, [cfg]);
+  // Utility to show available template variables in prompt
+  const _normalizeVar = (s: string) => (s || '').replace(/\W+/g, '_').replace(/^_+|_+$/g, '');
+  const variableHints = useMemo(() => {
+    const base = ['{Field_Name}', '{Field_Value}'];
+    const cols = (columns || []).map((c) => `{${_normalizeVar(c)}}`);
+    return [...base, ...cols];
+  }, [columns]);
   const [editingName, setEditingName] = useState<string | null>(null);
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const leftScrollRef = useRef<HTMLDivElement | null>(null);
@@ -235,7 +248,7 @@ export default function BuilderStep2() {
         {/* Left: targets with previews (scrollable) */}
         <div ref={leftScrollRef} style={{ height: '100%', overflow: 'auto', paddingRight: 8 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
-            <button onClick={handlePreview} disabled={!uploadId || previewBusy}>
+            <button onClick={handlePreview} disabled={!uploadId || previewBusy || aiPromptMissing}>
               {previewBusy ? 'Previewing…' : `Preview (top ${previewLimit})`}
             </button>
             <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -247,6 +260,11 @@ export default function BuilderStep2() {
               </select>
             </label>
             {preview && (<span>Kept {preview.rows_kept} of {preview.rows_total}</span>)}
+            {aiPromptMissing && (
+              <span style={{ fontSize: 12, color: '#8a5a00', background: '#fff6e6', border: '1px solid #ffd591', padding: '4px 6px', borderRadius: 6 }}>
+                AI is enabled for at least one target, but its prompt is empty.
+              </span>
+            )}
           </div>
 
           {(targets || []).map((t) => (
@@ -322,6 +340,9 @@ export default function BuilderStep2() {
                   {panelOpen.ai && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
                       <textarea rows={4} placeholder="Prompt template (required when AI is enabled)" value={cfg[activeTarget]?.prompt || ''} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].prompt = (e.target as HTMLTextAreaElement).value; })} style={{ width: '100%' }} />
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        Available variables: {variableHints.join(', ')}
+                      </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <label>Source column</label>
                         <select value={cfg[activeTarget]?.ai_source_column || activeTarget} onChange={(e)=>updateCfg((c)=>{ const v = (e.target as HTMLSelectElement).value; c[activeTarget].ai_source_column = v === activeTarget ? undefined : v; })}>
@@ -330,6 +351,9 @@ export default function BuilderStep2() {
                           ))}
                         </select>
                         <span style={{ fontSize: 12, color: '#666' }}>(defaults to this target column)</span>
+                        {cfg[activeTarget]?.ai_source_column && !columns.includes(cfg[activeTarget]?.ai_source_column) && (
+                          <span style={{ fontSize: 12, color: '#8a1f1f' }}>Selected source column not found; will fallback to target.</span>
+                        )}
                       </div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <label>Model</label>
@@ -480,3 +504,4 @@ export default function BuilderStep2() {
     </main>
   );
 }
+

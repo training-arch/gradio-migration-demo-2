@@ -104,12 +104,27 @@ def get_runtime_config():
     except Exception:
         celery_ok = False
 
+    # AI observability (non-sensitive)
+    def _env_bool(name: str, default: bool = False) -> bool:
+        v = os.getenv(name)
+        if v is None:
+            return default
+        return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+    ai_enabled = _env_bool("AI_ENABLED", False)
+    openai_key_present = bool(os.getenv("OPENAI_API_KEY"))
+    default_ai_model = os.getenv("AI_MODEL", "gpt-4o-mini")
+
     return {
         "job_runner": runner,
         "storage_backend": storage,
         "cors_origins": origins,
         "db_enabled": bool(SessionFactory),
         "celery_enabled": celery_ok,
+        # AI status (no secrets)
+        "ai_enabled": ai_enabled,
+        "openai_key_present": openai_key_present,
+        "default_ai_model": default_ai_model,
     }
 
 

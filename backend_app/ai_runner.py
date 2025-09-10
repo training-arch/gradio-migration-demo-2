@@ -81,7 +81,12 @@ def parse_ai(content: str) -> Dict[str, Any]:
                     confidence = float(c)
             return {"trigger": trigger, "message": message, **({"confidence": confidence} if confidence is not None else {})}
     except Exception:
-        pass
+        # Parsing failed; log small snippet at DEBUG for diagnostics (safe)
+        try:
+            snippet = (content or "")[:80].replace("\n", " ")
+            log.debug("ai_parse json failed; snippet='%s'", snippet)
+        except Exception:
+            pass
 
     # Fallback: light regex-like extraction
     lower = content.lower()
@@ -104,6 +109,15 @@ def parse_ai(content: str) -> Dict[str, Any]:
                 break
             except Exception:
                 pass
+
+    # If no trigger and message empty, emit a short DEBUG snippet for observability
+    try:
+        if not trigger and not (message or "").strip():
+            snippet = (content or "")[:80].replace("\n", " ")
+            if snippet:
+                log.debug("ai_parse non-trigger; snippet='%s'", snippet)
+    except Exception:
+        pass
 
     return {"trigger": trigger, "message": message}
 
