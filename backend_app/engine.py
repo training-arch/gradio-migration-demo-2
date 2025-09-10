@@ -9,7 +9,7 @@ Usage example:
 """
 from __future__ import annotations
 import re
-from typing import Dict, Tuple, Any, List
+from typing import Dict, Tuple, Any, List, Callable, Optional
 import pandas as pd
 import os
 
@@ -186,19 +186,39 @@ def ensure_target_defaults(cfg_t: dict | None) -> dict:
 # -----------------------------
 # Core engine
 # -----------------------------
-def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str | None = None) -> tuple[pd.DataFrame, str | None]:
+def run_targets(
+    filepath: str,
+    targets_config: Dict[str, dict],
+    save_path: str | None = None,
+    progress_cb: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+) -> tuple[pd.DataFrame, str | None]:
     """
     Execute all configured targets against an Excel file and return (kept_df, out_path_or_None).
     - Writes Excel only if save_path is provided.
     - 'kept_df' contains only rows that triggered at least one rule across all targets.
     """
+    def _report(stage: str, **payload: Any) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(stage, payload)
+        except Exception:
+            # never let progress reporting break the engine
+            pass
+
     df = pd.read_excel(filepath)
+    _report("read", rows=int(df.shape[0]))
     out = df.copy()
 
     # Validate selected columns
     for tcol in targets_config.keys():
         if tcol not in df.columns:
             raise ValueError(f"Selected target column not found in Excel: {tcol}")
+
+    ai_total = 0
+    ai_done = 0
+    # Collect prompts for all targets first to know a stable total
+    collected: Dict[str, Dict[str, Any]] = {}
 
     for target_col, cfg_raw in (targets_config or {}).items():
         cfg = ensure_target_defaults(cfg_raw)
@@ -252,10 +272,10 @@ def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str |
             results.append(" ; ".join(messages) if messages else "[]")
             prefilter_keep.append(True)
 
-        # Second pass: AI evaluation on rows that survived filters
+        # Collect prompts for later AI evaluation across all targets
+        prompts: List[str] = []
+        row_indices: List[int] = []
         if ai_enabled:
-            prompts: List[str] = []
-            row_indices: List[int] = []
             user_prompt = str(cfg.get("prompt", ""))
             log.info(
                 "AI enabled for target=%s source_col=%s prompt_len=%d rows=%d",
@@ -275,38 +295,62 @@ def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str |
                 prompts.append(rendered)
                 row_indices.append(idx)
 
-            if prompts:
-                model = str(cfg.get("ai_model") or os.getenv("AI_MODEL", "gpt-4o-mini"))
-                max_tokens = int(cfg.get("ai_max_tokens") or os.getenv("AI_MAX_TOKENS", "80"))
-                temperature = float(cfg.get("ai_temperature") or os.getenv("AI_TEMPERATURE", "0"))
-                use_cache = bool(cfg.get("ai_cache", True))
-                log.info("AI batch start: target=%s prompts=%d model=%s cache=%s", target_col, len(prompts), model, use_cache)
+        collected[target_col] = {
+            "results": results,
+            "prompts": prompts,
+            "rows": row_indices,
+            "model": str(cfg.get("ai_model") or os.getenv("AI_MODEL", "gpt-4o-mini")),
+            "max_tokens": int(cfg.get("ai_max_tokens") or os.getenv("AI_MAX_TOKENS", "80")),
+            "temperature": float(cfg.get("ai_temperature") or os.getenv("AI_TEMPERATURE", "0")),
+            "use_cache": bool(cfg.get("ai_cache", True)),
+        }
 
-                # Run in simple batches to respect rate limits minimally
-                BATCH = 20
-                for i in range(0, len(prompts), BATCH):
-                    batch_prompts = prompts[i:i+BATCH]
-                    batch_rows = row_indices[i:i+BATCH]
-                    outs = run_batch(batch_prompts, model=model, max_tokens=max_tokens, temperature=temperature, use_cache=use_cache)
-                    triggered = 0
-                    for (ri, out_obj) in zip(batch_rows, outs):
-                        content = str(out_obj.get("content") or "{}")
-                        norm = parse_ai(content)
-                        if norm.get("trigger"):
-                            msg = str(norm.get("message") or "AI rule triggered").strip()
-                            conf = norm.get("confidence")
-                            if isinstance(conf, (int, float)):
-                                tag = f"confidence={float(conf):.2f} - AI: {msg}" if msg else f"confidence={float(conf):.2f} - AI"
-                            else:
-                                tag = f"AI: {msg}" if msg else "AI"
-                            # Append to existing messages
-                            prev = results[ri]
-                            if prev == "[]" or not prev:
-                                results[ri] = tag
-                            else:
-                                results[ri] = f"{prev} ; {tag}"
-                            triggered += 1
-                    log.info("AI batch done: target=%s batch=%d..%d triggered=%d", target_col, i, i+len(batch_prompts)-1, triggered)
+    # Compute global AI total and report once before execution
+    for t, pack in collected.items():
+        ps = pack.get("prompts") or []
+        if ps:
+            ai_total += len(ps)
+    _report("ai_total", total=ai_total)
+
+    # Execute AI per target with global progress
+    for target_col, pack in collected.items():
+        prompts: List[str] = pack["prompts"] or []
+        row_indices: List[int] = pack["rows"] or []
+        results: List[str] = pack["results"]
+        if not prompts:
+            out[f"{target_col} Mistakes"] = results
+            continue
+        model = pack["model"]
+        max_tokens = int(pack["max_tokens"])
+        temperature = float(pack["temperature"])
+        use_cache = bool(pack["use_cache"])
+        log.info("AI batch start: target=%s prompts=%d model=%s cache=%s", target_col, len(prompts), model, use_cache)
+
+        BATCH = 20
+        for i in range(0, len(prompts), BATCH):
+            batch_prompts = prompts[i:i+BATCH]
+            batch_rows = row_indices[i:i+BATCH]
+            outs = run_batch(batch_prompts, model=model, max_tokens=max_tokens, temperature=temperature, use_cache=use_cache)
+            triggered = 0
+            for (ri, out_obj) in zip(batch_rows, outs):
+                content = str(out_obj.get("content") or "{}")
+                norm = parse_ai(content)
+                if norm.get("trigger"):
+                    msg = str(norm.get("message") or "AI rule triggered").strip()
+                    conf = norm.get("confidence")
+                    if isinstance(conf, (int, float)):
+                        tag = f"confidence={float(conf):.2f} - AI: {msg}" if msg else f"confidence={float(conf):.2f} - AI"
+                    else:
+                        tag = f"AI: {msg}" if msg else "AI"
+                    prev = results[ri]
+                    if prev == "[]" or not prev:
+                        results[ri] = tag
+                    else:
+                        results[ri] = f"{prev} ; {tag}"
+                    triggered += 1
+            ai_done += len(batch_prompts)
+            _report("ai", done=ai_done, total=ai_total, target=target_col, batch=i//BATCH, batch_size=len(batch_prompts))
+            log.info("AI batch done: target=%s batch=%d..%d triggered=%d", target_col, i, i+len(batch_prompts)-1, triggered)
 
         out[f"{target_col} Mistakes"] = results
 
@@ -323,7 +367,9 @@ def run_targets(filepath: str, targets_config: Dict[str, dict], save_path: str |
 
     out_path = None
     if save_path:
+        _report("write_start")
         kept.to_excel(save_path, index=False)
         out_path = save_path
+        _report("write_done")
 
     return kept, out_path

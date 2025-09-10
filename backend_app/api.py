@@ -386,7 +386,7 @@ def _run_job(job_id: str):
     if not job:
         return
     try:
-        job["status"] = "RUNNING"; job["progress"] = 5
+        job["status"] = "RUNNING"; job["progress"] = 5; job["status_text"] = "queued"
         # DB mirror
         if SessionFactory and DBJob is not None:
             try:
@@ -399,7 +399,45 @@ def _run_job(job_id: str):
             except Exception:
                 pass
 
-        kept_df, out_path = run_targets(job["upload_path"], job["targets_config"], save_path=job["result_path"])
+        def _progress(stage: str, payload: dict):
+            # Map stages to coarse-grained percentages
+            try:
+                if stage == "read":
+                    job["progress"] = 10; job["status_text"] = "reading file"
+                elif stage == "ai_total":
+                    job["ai_total"] = int(payload.get("total") or 0)
+                    job["ai_done"] = 0
+                    job["progress"] = max(20, int(job.get("progress", 20)))
+                    job["status_text"] = f"preparing AI ({job['ai_total']} prompts)"
+                elif stage == "ai":
+                    total = int(payload.get("total") or job.get("ai_total") or 0)
+                    done = int(payload.get("done") or 0)
+                    job["ai_total"] = total
+                    job["ai_done"] = done
+                    job["batch_size"] = int(payload.get("batch_size") or 0)
+                    if total > 0:
+                        frac = max(0.0, min(1.0, done / total))
+                        job["progress"] = min(95, 20 + int(frac * 75))
+                        job["status_text"] = f"AI {done}/{total} (batch {payload.get('batch_size', 0)})"
+                elif stage == "write_start":
+                    job["progress"] = max(95, int(job.get("progress", 90)))
+                    job["status_text"] = "writing output"
+                elif stage == "write_done":
+                    job["progress"] = max(95, int(job.get("progress", 95)))
+                # DB mirror (best-effort)
+                if SessionFactory and DBJob is not None:
+                    try:
+                        with SessionFactory() as s:  # type: ignore[attr-defined]
+                            dbj = s.get(DBJob, job_id)
+                            if dbj:
+                                dbj.progress = int(job.get("progress", 0))
+                                s.commit()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        kept_df, out_path = run_targets(job["upload_path"], job["targets_config"], save_path=job["result_path"], progress_cb=_progress)
         job["progress"] = 95
 
         # write succeeded
