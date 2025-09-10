@@ -113,6 +113,9 @@ export default function BuilderStep2() {
   const [panelOpen, setPanelOpen] = useState({ ai: false, wc: false, kw: false, vf: false, tf: false });
   const [valuesCache, setValuesCache] = useState<Record<string, string[]>>({});
   const [valuesLoading, setValuesLoading] = useState<Record<string, boolean>>({});
+  // Text Filters editing state
+  const [tfCol, setTfCol] = useState<string>("");
+  const [tfNew, setTfNew] = useState<string>("");
   const [preview, setPreview] = useState<PreviewRes | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewLimit, setPreviewLimit] = useState(5);
@@ -187,13 +190,31 @@ export default function BuilderStep2() {
     finally { setValuesLoading((m) => ({ ...m, [col]: false })); }
   };
 
+  // Auto-select an existing text-filter column when opening the Filters panel or when tf_on becomes true
+  useEffect(() => {
+    if (!activeTarget) return;
+    const c = cfg[activeTarget] || {};
+    const hasTf = !!c.tf_on;
+    if (!panelOpen.vf && !hasTf) return;
+    if (tfCol) return;
+    const tf = c.text_filters || {};
+    const keys = Object.keys(tf).filter((k) => Array.isArray(tf[k]?.phrases) && (tf[k]?.phrases || []).length > 0);
+    if (keys.length > 0) setTfCol(keys[0]);
+  }, [panelOpen.vf, cfg, activeTarget]);
+
   const targetBadge = (t: string) => {
     const c = cfg[t] || {};
     const ai = c.ai ? 'AI ON' : 'AI OFF';
     const wc = c.wc ? `WC ${c.wc_min ?? 7}` : 'WC OFF';
     const kwCount = (c.kw_flag?.enabled && Array.isArray(c.kw_flag?.phrases)) ? c.kw_flag.phrases.length : 0;
     const kw = c.kw_flag?.enabled ? `KW ${kwCount}` : 'KW OFF';
-    const vf = c.vf_on ? `Filters ${Object.keys(c.filters || {}).length}` : 'Filters OFF';
+    const rawValueCount = Object.keys(c.filters || {}).filter((col) => Array.isArray((c.filters || {})[col]) && ((c.filters || {})[col] as any[]).length > 0).length;
+    const rawTextCount = Object.keys(c.text_filters || {}).filter((col) => Array.isArray((c.text_filters || {})[col]?.phrases) && ((c.text_filters || {})[col]?.phrases || []).length > 0).length;
+    const valueOn = !!c.vf_on && rawValueCount > 0;
+    const textOn = !!c.tf_on && rawTextCount > 0;
+    const vf = (valueOn || textOn)
+      ? `Filters: Value ${valueOn ? `ON (${rawValueCount})` : 'OFF'} | Text ${textOn ? `ON (${rawTextCount})` : 'OFF'}`
+      : 'Filters OFF';
     const mode = (c.filter_mode === 'OR') ? 'Mode OR' : 'Mode AND';
     return `${ai} | ${wc} | ${kw} | ${vf} | ${mode}`;
   };
@@ -435,9 +456,19 @@ export default function BuilderStep2() {
                   <div>▾</div>
                 </div>
                 <div style={{ padding: 8, borderTop: '1px solid #f5f5f5' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <input type="checkbox" checked={!!cfg[activeTarget]?.vf_on} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].vf_on = (e.target as HTMLInputElement).checked; })} /> Enable
-                  </label>
+                  {(() => {
+                    const c = cfg[activeTarget] || {} as any;
+                    const rawValueCount = Object.keys(c.filters || {}).filter((col: string) => Array.isArray((c.filters || {})[col]) && ((c.filters || {})[col] as any[]).length > 0).length;
+                    const rawTextCount = Object.keys(c.text_filters || {}).filter((col: string) => Array.isArray((c.text_filters || {})[col]?.phrases) && ((c.text_filters || {})[col]?.phrases || []).length > 0).length;
+                    const valueOn = !!c.vf_on && rawValueCount > 0;
+                    const textOn = !!c.tf_on && rawTextCount > 0;
+                    const mode = (c.filter_mode === 'OR') ? 'OR' : 'AND';
+                    return (
+                      <div style={{ fontSize: 12, color: '#555', marginBottom: 6 }}>
+                        Filters: Value {valueOn ? `ON (${rawValueCount})` : 'OFF'} | Text {textOn ? `ON (${rawTextCount})` : 'OFF'} | Mode {mode}
+                      </div>
+                    );
+                  })()}
                   {panelOpen.vf && (
                     <div style={{ marginTop: 6 }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
@@ -447,9 +478,14 @@ export default function BuilderStep2() {
                           <option value="OR">OR</option>
                         </select>
                       </div>
+                      {/* Value Filters subsection */}
+                      <div style={{ fontWeight: 600, margin: '10px 0 6px' }}>Value Filters (exact match)</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <input type="checkbox" checked={!!cfg[activeTarget]?.vf_on} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].vf_on = (e.target as HTMLInputElement).checked; })} /> Enable
+                      </label>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <label>Add column</label>
-                        <select defaultValue="" onChange={async (e) => {
+                        <select defaultValue="" disabled={!cfg[activeTarget]?.vf_on} onChange={async (e) => {
                           const col = (e.target as HTMLSelectElement).value; if (!col) return;
                           await fetchValues(col);
                           updateCfg((c)=>{ const f = c[activeTarget].filters || {}; if (!f[col]) f[col] = []; c[activeTarget].filters = f; });
@@ -466,7 +502,7 @@ export default function BuilderStep2() {
                               <div style={{ fontWeight: 600 }}>{col}</div>
                               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                 <span style={{ fontSize: 12, color: '#555' }}>{(cfg[activeTarget].filters[col] || []).length} selected</span>
-                                <button onClick={() => updateCfg((c)=>{ const f = c[activeTarget].filters || {}; delete f[col]; c[activeTarget].filters = f; })}>Remove</button>
+                                <button disabled={!cfg[activeTarget]?.vf_on} onClick={() => updateCfg((c)=>{ const f = c[activeTarget].filters || {}; delete f[col]; c[activeTarget].filters = f; if (Object.keys(f).length === 0) { c[activeTarget].vf_on = false; } })}>Remove</button>
                               </div>
                             </div>
                             <div style={{ padding: 8, borderTop: '1px dashed #eee', maxHeight: 180, overflow: 'auto', background: '#fafafa' }}>
@@ -474,11 +510,13 @@ export default function BuilderStep2() {
                                 const checked = (cfg[activeTarget].filters[col] || []).includes(v);
                                 return (
                                   <label key={v} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
-                                    <input type="checkbox" checked={checked} onChange={(e)=>updateCfg((c)=>{
+                                    <input type="checkbox" disabled={!cfg[activeTarget]?.vf_on} checked={checked} onChange={(e)=>updateCfg((c)=>{
                                       const arr = Array.isArray(c[activeTarget].filters[col]) ? c[activeTarget].filters[col] : [];
                                       if ((e.target as HTMLInputElement).checked) { if (!arr.includes(v)) arr.push(v); }
                                       else { c[activeTarget].filters[col] = arr.filter((x: string)=>x!==v); }
-                                      const f = c[activeTarget].filters || {}; f[col] = Array.from(new Set(f[col] || [])); c[activeTarget].filters = f;
+                                      const f = c[activeTarget].filters || {}; f[col] = Array.from(new Set(f[col] || []));
+                                      if (!f[col] || (Array.isArray(f[col]) && (f[col] as any[]).length === 0)) { delete f[col]; }
+                                      c[activeTarget].filters = f; if (Object.keys(f).length === 0) { c[activeTarget].vf_on = false; }
                                     })} />
                                     <span>{String(v)}</span>
                                   </label>
@@ -489,11 +527,58 @@ export default function BuilderStep2() {
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+
+                      {/* --- Text Filters subsection --- */}
+                      <div style={{ fontWeight: 600, margin: '14px 0 6px' }}>Text Filters (contains phrases)</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="checkbox" checked={!!cfg[activeTarget]?.tf_on} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].tf_on = (e.target as HTMLInputElement).checked; })} /> Enable
+                      </label>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                        <label>Active column</label>
+                        <select value={tfCol} disabled={!cfg[activeTarget]?.tf_on} onChange={(e)=>{ const v = (e.target as HTMLSelectElement).value; setTfCol(v); if (v) updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; c[activeTarget].text_filters[v] = c[activeTarget].text_filters[v] || { mode: 'ANY', phrases: [], include: true }; }); }}>
+                          <option value="">-- choose column --</option>
+                          {columns.map((c) => (<option key={c} value={c}>{c}</option>))}
+                        </select>
+                        {tfCol && (
+                          <>
+                            <label>Behavior</label>
+                            <select disabled={!cfg[activeTarget]?.tf_on} value={(cfg[activeTarget]?.text_filters?.[tfCol]?.include ? 'Include' : 'Exclude')} onChange={(e)=>updateCfg((c)=>{ const inc = ((e.target as HTMLSelectElement).value === 'Include'); c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; entry.include = inc; c[activeTarget].text_filters[tfCol] = entry; })}>
+                              <option value="Include">Include</option>
+                              <option value="Exclude">Exclude</option>
+                            </select>
+                            <label>Match</label>
+                            <select disabled={!cfg[activeTarget]?.tf_on} value={(cfg[activeTarget]?.text_filters?.[tfCol]?.mode || 'ANY')} onChange={(e)=>updateCfg((c)=>{ const mode = ((e.target as HTMLSelectElement).value === 'ALL') ? 'ALL' : 'ANY'; c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; entry.mode = mode; c[activeTarget].text_filters[tfCol] = entry; })}>
+                              <option value="ANY">ANY</option>
+                              <option value="ALL">ALL</option>
+                            </select>
+                          </>
+                        )}
+                      </div>
+                      {tfCol && (
+                        <div style={{ marginTop: 8, border: '1px dashed #ddd', borderRadius: 6 }}>
+                          <div style={{ padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <input disabled={!cfg[activeTarget]?.tf_on} value={tfNew} onChange={(e)=>setTfNew((e.target as HTMLInputElement).value)} placeholder="Add phrase" onKeyDown={(e)=>{ if (e.key==='Enter') { const v = tfNew.trim(); if (v) { updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; const setp = new Set<string>(Array.isArray(entry.phrases) ? entry.phrases : []); setp.add(v); entry.phrases = Array.from(setp); c[activeTarget].text_filters[tfCol] = entry; }); setTfNew(''); } }} } style={{ flex: 1 }} />
+                            <button disabled={!cfg[activeTarget]?.tf_on} onClick={()=>{ const v = tfNew.trim(); if (v) { updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; const setp = new Set<string>(Array.isArray(entry.phrases) ? entry.phrases : []); setp.add(v); entry.phrases = Array.from(setp); c[activeTarget].text_filters[tfCol] = entry; }); setTfNew(''); } }}>Add</button>
+                            <button disabled={!cfg[activeTarget]?.tf_on} onClick={()=>{ updateCfg((c)=>{ if (c[activeTarget].text_filters) { delete c[activeTarget].text_filters[tfCol]; const entries = c[activeTarget].text_filters || {}; const hasAny = Object.keys(entries).some((k) => Array.isArray(entries[k]?.phrases) && (entries[k]?.phrases || []).length > 0); if (!hasAny) { c[activeTarget].tf_on = false; } } }); setTfCol(''); }}>Remove column</button>
+                          </div>
+                          <div style={{ padding: 8, borderTop: '1px dashed #eee', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {(cfg[activeTarget]?.text_filters?.[tfCol]?.phrases || []).map((p: string) => (
+                              <span key={p} style={{ background: '#eef', border: '1px solid #dde', borderRadius: 12, padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <span>{p}</span>
+                                <button disabled={!cfg[activeTarget]?.tf_on} onClick={()=>updateCfg((c)=>{ const entry = c[activeTarget].text_filters?.[tfCol]; if (!entry) return; entry.phrases = (entry.phrases || []).filter((x: string) => x!==p); if (!entry.phrases.length) { delete c[activeTarget].text_filters[tfCol]; const entries = c[activeTarget].text_filters || {}; const hasAny = Object.keys(entries).some((k) => Array.isArray(entries[k]?.phrases) && (entries[k]?.phrases || []).length > 0); if (!hasAny) { c[activeTarget].tf_on = false; } } else { c[activeTarget].text_filters[tfCol] = entry; } })} style={{ fontSize: 12 }}>x</button>
+                              </span>
+                            ))}
+                            {!(cfg[activeTarget]?.text_filters?.[tfCol]?.phrases || []).length && (
+                              <span style={{ color: '#666' }}>No phrases yet</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
           )}
         </div>
       </div>
@@ -504,4 +589,3 @@ export default function BuilderStep2() {
     </main>
   );
 }
-
