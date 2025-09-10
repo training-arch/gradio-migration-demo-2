@@ -533,32 +533,38 @@ export default function BuilderStep2() {
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <input type="checkbox" checked={!!cfg[activeTarget]?.tf_on} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].tf_on = (e.target as HTMLInputElement).checked; })} /> Enable
                       </label>
+                      {/* Row 1: Active column */}
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
                         <label>Active column</label>
-                        <select value={tfCol} disabled={!cfg[activeTarget]?.tf_on} onChange={(e)=>{ const v = (e.target as HTMLSelectElement).value; setTfCol(v); if (v) updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; c[activeTarget].text_filters[v] = c[activeTarget].text_filters[v] || { mode: 'ANY', phrases: [], include: true }; }); }}>
+                        <select value={tfCol} disabled={!cfg[activeTarget]?.tf_on} onChange={(e)=>{ const v = (e.target as HTMLSelectElement).value; setTfCol(v); if (v) updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; c[activeTarget].text_filters[v] = c[activeTarget].text_filters[v] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; }); }}>
                           <option value="">-- choose column --</option>
                           {columns.map((c) => (<option key={c} value={c}>{c}</option>))}
                         </select>
-                        {tfCol && (
-                          <>
-                            <label>Behavior</label>
-                            <select disabled={!cfg[activeTarget]?.tf_on} value={(cfg[activeTarget]?.text_filters?.[tfCol]?.include ? 'Include' : 'Exclude')} onChange={(e)=>updateCfg((c)=>{ const inc = ((e.target as HTMLSelectElement).value === 'Include'); c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; entry.include = inc; c[activeTarget].text_filters[tfCol] = entry; })}>
-                              <option value="Include">Include</option>
-                              <option value="Exclude">Exclude</option>
-                            </select>
-                            <label>Match</label>
-                            <select disabled={!cfg[activeTarget]?.tf_on} value={(cfg[activeTarget]?.text_filters?.[tfCol]?.mode || 'ANY')} onChange={(e)=>updateCfg((c)=>{ const mode = ((e.target as HTMLSelectElement).value === 'ALL') ? 'ALL' : 'ANY'; c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; entry.mode = mode; c[activeTarget].text_filters[tfCol] = entry; })}>
-                              <option value="ANY">ANY</option>
-                              <option value="ALL">ALL</option>
-                            </select>
-                          </>
-                        )}
+                      </div>
+                      {/* Row 2: Options */}
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                        <label>Behavior</label>
+                        <select disabled={!cfg[activeTarget]?.tf_on || !tfCol} value={(cfg[activeTarget]?.text_filters?.[tfCol]?.include ? 'Include' : 'Exclude')} onChange={(e)=>updateCfg((c)=>{ const inc = ((e.target as HTMLSelectElement).value === 'Include'); c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; entry.include = inc; c[activeTarget].text_filters[tfCol] = entry; })}>
+                          <option value="Include">Include</option>
+                          <option value="Exclude">Exclude</option>
+                        </select>
+                        <label>Match</label>
+                        <select disabled={!cfg[activeTarget]?.tf_on || !tfCol} value={(cfg[activeTarget]?.text_filters?.[tfCol]?.mode || 'ANY')} onChange={(e)=>updateCfg((c)=>{ const mode = ((e.target as HTMLSelectElement).value === 'ALL') ? 'ALL' : 'ANY'; c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; entry.mode = mode; c[activeTarget].text_filters[tfCol] = entry; })}>
+                          <option value="ANY">ANY</option>
+                          <option value="ALL">ALL</option>
+                        </select>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="checkbox" disabled={!cfg[activeTarget]?.tf_on || !tfCol} checked={!!cfg[activeTarget]?.text_filters?.[tfCol]?.case_sensitive} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; entry.case_sensitive = (e.target as HTMLInputElement).checked; c[activeTarget].text_filters[tfCol] = entry; })} /> Match case
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="checkbox" disabled={!cfg[activeTarget]?.tf_on || !tfCol} checked={!!cfg[activeTarget]?.text_filters?.[tfCol]?.whole_word} onChange={(e)=>updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; entry.whole_word = (e.target as HTMLInputElement).checked; c[activeTarget].text_filters[tfCol] = entry; })} /> Match whole word
+                        </label>
                       </div>
                       {tfCol && (
                         <div style={{ marginTop: 8, border: '1px dashed #ddd', borderRadius: 6 }}>
                           <div style={{ padding: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <input disabled={!cfg[activeTarget]?.tf_on} value={tfNew} onChange={(e)=>setTfNew((e.target as HTMLInputElement).value)} placeholder="Add phrase" onKeyDown={(e)=>{ if (e.key==='Enter') { const v = tfNew.trim(); if (v) { updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; const setp = new Set<string>(Array.isArray(entry.phrases) ? entry.phrases : []); setp.add(v); entry.phrases = Array.from(setp); c[activeTarget].text_filters[tfCol] = entry; }); setTfNew(''); } }} } style={{ flex: 1 }} />
-                            <button disabled={!cfg[activeTarget]?.tf_on} onClick={()=>{ const v = tfNew.trim(); if (v) { updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true }; const setp = new Set<string>(Array.isArray(entry.phrases) ? entry.phrases : []); setp.add(v); entry.phrases = Array.from(setp); c[activeTarget].text_filters[tfCol] = entry; }); setTfNew(''); } }}>Add</button>
+                            <input disabled={!cfg[activeTarget]?.tf_on} value={tfNew} onChange={(e)=>setTfNew((e.target as HTMLInputElement).value)} placeholder="Add phrase" onKeyDown={(e)=>{ if (e.key==='Enter') { const v = tfNew.trim(); if (v) { updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; const setp = new Set<string>(Array.isArray(entry.phrases) ? entry.phrases : []); setp.add(v); entry.phrases = Array.from(setp); c[activeTarget].text_filters[tfCol] = entry; }); setTfNew(''); } }} } style={{ flex: 1 }} />
+                            <button disabled={!cfg[activeTarget]?.tf_on} onClick={()=>{ const v = tfNew.trim(); if (v) { updateCfg((c)=>{ c[activeTarget].text_filters = c[activeTarget].text_filters || {}; const entry = c[activeTarget].text_filters[tfCol] || { mode: 'ANY', phrases: [], include: true, case_sensitive: false, whole_word: false }; const setp = new Set<string>(Array.isArray(entry.phrases) ? entry.phrases : []); setp.add(v); entry.phrases = Array.from(setp); c[activeTarget].text_filters[tfCol] = entry; }); setTfNew(''); } }}>Add</button>
                             <button disabled={!cfg[activeTarget]?.tf_on} onClick={()=>{ updateCfg((c)=>{ if (c[activeTarget].text_filters) { delete c[activeTarget].text_filters[tfCol]; const entries = c[activeTarget].text_filters || {}; const hasAny = Object.keys(entries).some((k) => Array.isArray(entries[k]?.phrases) && (entries[k]?.phrases || []).length > 0); if (!hasAny) { c[activeTarget].tf_on = false; } } }); setTfCol(''); }}>Remove column</button>
                           </div>
                           <div style={{ padding: 8, borderTop: '1px dashed #eee', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
